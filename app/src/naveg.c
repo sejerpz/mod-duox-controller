@@ -1008,7 +1008,8 @@ static void request_pedalboards(uint8_t dir, uint16_t bank_uid)
     // copy the bank uid
     i += int_to_str((bank_uid), &buffer[i], sizeof(buffer) - i, 0);
 
-    buffer[i++] = 0;
+    // not counted: ui_comm_webgui_send() sends the terminator itself, one past the length given
+    buffer[i] = 0;
 
     uint16_t prev_hover = g_current_pedalboard;
     uint16_t prev_selected = g_current_pedalboard;
