@@ -18,6 +18,7 @@
 #include "actuator.h"
 #include "calibration.h"
 #include "mod-protocol.h"
+#include "images.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -120,6 +121,7 @@ float g_pot_calibrations[2][POTS_COUNT] = {{0}};
 bool g_device_booted = false;
 bool g_dialog_active = false;
 bool g_pedalboards_need_update = false;
+static bool g_waiting_for_ui = false;
 
 /*
 ************************************************************************************************************************
@@ -2256,6 +2258,31 @@ void naveg_initial_state(uint16_t max_menu, uint16_t page_min, uint16_t page_max
 
     g_naveg_pedalboards->hover = g_current_pedalboard;
     g_naveg_pedalboards->selected = g_current_pedalboard;
+}
+
+void naveg_wait_for_ui(void)
+{
+    g_device_booted = false;
+    g_waiting_for_ui = true;
+
+    // the menu is left first: menu_enter does not redraw it once the tool is off
+    if (tool_is_on(DISPLAY_TOOL_SYSTEM))
+        naveg_toggle_tool(DISPLAY_TOOL_SYSTEM, 0);
+
+    naveg_turn_off_leds();
+
+    screen_clear(0);
+    screen_clear(1);
+    screen_image(0, mod_logo);
+    screen_image(1, mod_duo);
+}
+
+void naveg_ui_booted(void)
+{
+    if (!g_waiting_for_ui) return;
+
+    g_waiting_for_ui = false;
+    naveg_reload_display();
 }
 
 void naveg_ui_connection(uint8_t status)

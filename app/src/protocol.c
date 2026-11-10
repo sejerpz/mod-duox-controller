@@ -558,6 +558,8 @@ void cb_boot(uint8_t serial_id, proto_t *proto)
 
     g_device_booted = true;
 
+    naveg_ui_booted();
+
     protocol_send_response(CMD_RESPONSE, 0, proto);
 }
 

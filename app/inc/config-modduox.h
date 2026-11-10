@@ -318,6 +318,7 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
 #define LED_BRIGHTNESS_ID   DEVICE_SETTINGS_ID + 9
 #define USB_B_MODE_ID       DEVICE_SETTINGS_ID + 10
 #define AUDIO_FRAME_SIZE_ID DEVICE_SETTINGS_ID + 11
+#define WEB_UI_ID           DEVICE_SETTINGS_ID + 12
 
 #define BLUETOOTH_DISCO_ID  BLUETOOTH_ID+2
 
@@ -384,6 +385,7 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
     {"< BACK TO SYSTEM",                MENU_RETURN,    DEVICE_SETTINGS_ID+1, DEVICE_SETTINGS_ID, NULL                       , 0},  \
     {"USB-B MODE",                      MENU_SET,       USB_B_MODE_ID,        DEVICE_SETTINGS_ID, system_usb_b_cb            , 0},  \
     {"AUDIO FRAME SIZE",                MENU_TOGGLE,    AUDIO_FRAME_SIZE_ID,  DEVICE_SETTINGS_ID, system_audio_frame_size_cb , 0},  \
+    {"DEFAULT WEB INTERFACE",           MENU_CONFIRM,   WEB_UI_ID,            DEVICE_SETTINGS_ID, system_web_ui_cb           , 0},  \
     {"DISPLAY BRIGHTNESS",              MENU_TOGGLE,    DISP_BL_ID,           DEVICE_SETTINGS_ID, system_display_cb          , 0},  \
     {"DISPLAY CONTRAST LEFT",           MENU_SET,       DISP_CONTRAST_L_ID,   DEVICE_SETTINGS_ID, system_display_contrast_lcb, 0},  \
     {"DISPLAY CONTRAST RIGHT",          MENU_SET,       DISP_CONTRAST_R_ID,   DEVICE_SETTINGS_ID, system_display_contrast_rcb, 0},  \
@@ -423,6 +425,7 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
     {BANKS_ID, "Banks", "To access the selected menu\nitem, disconnect from the\ngraphical web interface."}, \
     {PEDALBOARD_SAVE_ID, "Save state", "Save current parameter values\nas the default for the active\npedalboard?"},         \
     {PEDALBOARD_RESET_ID, "Reset state", "Reset all parameter values to\nthe last saved state for the\nactive pedalboard?"},      \
+    {WEB_UI_ID, "Web interface", "Switch the web interface back\nto the default one? It will\nrestart, the pedalboard keeps\nplaying."},      \
     {PEDALBOARD_NEW_ID, "New pedalboard", "Replace the current pedalboard\nwith a new empty one?\nUnsaved changes are lost."},      \
     {BLUETOOTH_DISCO_ID, "Enable Bluetooth", "Bluetooth discovery mode is   now enabled for 2 minutes"},  \
     {UPGRADE_ID, "Start System Upgrade", "To start the system upgrade\nprocess, press and hold down\nthe leftmost button and press\nyes. "}, \
