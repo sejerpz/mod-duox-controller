@@ -439,6 +439,13 @@ void system_pedalboard_cb(void *arg, int event)
             case PEDALBOARD_RESET_ID:
                 ui_comm_webgui_send(CMD_PEDALBOARD_RESET, strlen(CMD_PEDALBOARD_RESET));
                 break;
+
+            case PEDALBOARD_NEW_ID:
+                // the host answers first and loads the new pedalboard right after
+                ui_comm_webgui_set_response_cb(NULL, NULL);
+                ui_comm_webgui_send(CMD_PEDALBOARD_NEW, strlen(CMD_PEDALBOARD_NEW));
+                ui_comm_webgui_wait_response();
+                break;
         }
     }
 }
