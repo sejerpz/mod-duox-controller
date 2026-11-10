@@ -14,6 +14,7 @@
 #include "device.h"
 #include "calibration.h"
 #include "uc1701.h"
+#include "memory_map.h"
 
 /*
 ************************************************************************************************************************
@@ -41,10 +42,10 @@
 
 //// Dynamic menory allocation
 // defines the heap size
-const HeapRegion_t xHeapRegions[] =
+HeapRegion_t xHeapRegions[] =
 {
-    { ( uint8_t * ) 0x10007000, 0x2000 },
-    { ( uint8_t * ) 0x20000000, 0x8000 },
+    { ( uint8_t * ) 0x10007000, 0x2000 }, // updated from the linker symbols in hardware_setup
+    { ( uint8_t * ) 0x20000000, 0x8000 }, // 32KB SRAM0
     { NULL, 0 } /* Terminates the array. */
 };
 
@@ -442,6 +443,10 @@ void hardware_setup(void)
 
     // configure the peripherals power
     CLKPWR_ConfigPPWR(HW_CLK_PWR_CONTROL, ENABLE);
+
+    // the first region is whatever SRAM the linker left between the data and the main stack
+    xHeapRegions[0].pucStartAddress = (uint8_t *)_pvHeapStart;
+    xHeapRegions[0].xSizeInBytes = (size_t)(_pvHeapEnd - _pvHeapStart);
 
     //Pass the array into vPortDefineHeapRegions().
     vPortDefineHeapRegions( xHeapRegions );
