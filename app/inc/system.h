@@ -144,6 +144,7 @@ void system_led_brightness_cb(void *arg, int event);
 
 //set the USB B mode of the device, NEEDS A REBOOT
 void system_usb_b_cb(void *arg, int event);
+void system_audio_frame_size_cb(void *arg, int event);
 
 /*
 ************************************************************************************************************************

@@ -108,6 +108,7 @@ int16_t g_display_contrast_left = -1;
 int16_t g_display_contrast_right = -1;
 int8_t g_page_mode = -1;
 int8_t g_led_brightness = -1;
+int16_t g_audio_frame_size = -1;
 int g_usb_mode = -1;
 
 /*
@@ -220,6 +221,15 @@ static void recieve_sys_value(void *data, menu_item_t *item)
 
     //protocol ok
     if (atoi(values[1]) == 0)
+        item->data.value = atof(values[2]);
+}
+
+static void recieve_web_value(void *data, menu_item_t *item)
+{
+    char **values = data;
+
+    //protocol ok is 1 and not 0
+    if (atoi(values[1]) == 1)
         item->data.value = atof(values[2]);
 }
 
@@ -2195,4 +2205,42 @@ void system_pb_gain(void *arg, int event)
     }
 
     item->data.step = 1.0f;
+}
+
+// sends the frame size to the host (0 only asks for it) and keeps what the host answers
+static void send_audio_frame_size(menu_item_t *item, int16_t frame_size)
+{
+    char buffer[10];
+    uint8_t i;
+
+    i = copy_command(buffer, CMD_AUDIO_FRAME_SIZE);
+    i += int_to_str(frame_size, &buffer[i], sizeof(buffer) - i, 0);
+    buffer[i] = 0;
+
+    item->data.value = 0;
+    ui_comm_webgui_set_response_cb(recieve_web_value, item);
+    ui_comm_webgui_send(buffer, i);
+    ui_comm_webgui_wait_response();
+
+    g_audio_frame_size = (int16_t)item->data.value;
+}
+
+void system_audio_frame_size_cb(void *arg, int event)
+{
+    menu_item_t *item = arg;
+
+    if (g_audio_frame_size <= 0)
+        send_audio_frame_size(item, 0);
+
+    if (event == MENU_EV_ENTER)
+    {
+        if (g_audio_frame_size < AUDIO_FRAME_MAX) send_audio_frame_size(item, g_audio_frame_size + AUDIO_FRAME_STEP);
+        else send_audio_frame_size(item, AUDIO_FRAME_MIN);
+    }
+
+    char str_bfr[6] = {};
+    if (g_audio_frame_size > 0) int_to_str(g_audio_frame_size, str_bfr, sizeof(str_bfr), 0);
+    else strcpy(str_bfr, "?");
+
+    add_chars_to_menu_name(item, str_bfr);
 }
