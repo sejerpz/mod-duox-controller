@@ -510,12 +510,9 @@ void screen_encoder(uint8_t display_id, control_t *control)
     {
         uint8_t scalepoint_count_local = control->scale_points_count > 64 ? 64 : control->scale_points_count;
 
-        char **labels_list = MALLOC(sizeof(char*) * scalepoint_count_local);
-
-        if (labels_list == NULL)
-        {
-            return null_screen_encoded(display, display_id);
-        }
+        // one per display, the two displays can be drawn by different tasks
+        static char *labels_lists[GLCD_COUNT][64];
+        char **labels_list = labels_lists[display_id];
 
         if (control->scroll_dir)
             control->scroll_dir = 1;
@@ -544,8 +541,6 @@ void screen_encoder(uint8_t display_id, control_t *control)
         list.text_left_margin = 1;
         list.name = control->label;
         widget_listbox3(display, &list);
-
-        FREE(labels_list);
     }
     else if (control->properties & (FLAG_CONTROL_TOGGLED | FLAG_CONTROL_BYPASS))
     {
@@ -563,7 +558,7 @@ void screen_encoder(uint8_t display_id, control_t *control)
     // integer type control
     else if (control->properties & FLAG_CONTROL_INTEGER)
     {
-        char *title_str_bfr = (char *) MALLOC(15 * sizeof(char));
+        char title_str_bfr[15];
         strncpy(title_str_bfr, control->label, 14);
         title_str_bfr[14] = '\0';
 
@@ -582,10 +577,9 @@ void screen_encoder(uint8_t display_id, control_t *control)
         title.x = ((DISPLAY_WIDTH / 4) - (strlen(title_str_bfr) * 1.5));
         title.y = 14;
         widget_textbox(display, &title);
-        FREE(title_str_bfr);
 
         textbox_t int_box;
-        char *value_str = (char *) MALLOC(16 * sizeof(char));
+        char value_str[16];
         char value_str_bfr[5] = {0};
         int_to_str(control->value, value_str, sizeof(value_str), 0);
         int_box.color = GLCD_BLACK;
@@ -599,7 +593,6 @@ void screen_encoder(uint8_t display_id, control_t *control)
         int_box.right_margin = 0;
         strncpy(value_str_bfr, value_str, 4);
         value_str_bfr[4] = '\0';
-        FREE(value_str);
         int_box.text = value_str_bfr;
         int_box.align = ALIGN_NONE_NONE;
         int_box.x = (((DISPLAY_WIDTH / 4) + (DISPLAY_WIDTH / 2) )- (strlen(value_str_bfr) * 1.5));
@@ -612,12 +605,12 @@ void screen_encoder(uint8_t display_id, control_t *control)
         textbox_t value, title;
 
         //convert title
-        char *title_str_bfr = (char *) MALLOC(25 * sizeof(char));
+        char title_str_bfr[25];
         strncpy(title_str_bfr, control->label, 24);
         title_str_bfr[24] = '\0';
 
         char value_str_bfr[11] = {0};
-        char *unit_str_bfr = NULL;
+        char unit_str_bfr[24];
 
         if (!control->value_string) {
             //convert value
@@ -665,10 +658,9 @@ void screen_encoder(uint8_t display_id, control_t *control)
 
             //adds the unit to the value
             if (unit_str != NULL) {
-                unit_str_bfr = MALLOC(strlen(value_str_bfr)+strlen(unit_str)+3);
                 strcpy(unit_str_bfr, value_str_bfr);
                 strcat(unit_str_bfr, " ");
-                strcat(unit_str_bfr, unit_str);
+                strncat(unit_str_bfr, unit_str, sizeof(unit_str_bfr) - strlen(unit_str_bfr) - 1);
                 value.text = unit_str_bfr;
             }
             else {
@@ -704,8 +696,6 @@ void screen_encoder(uint8_t display_id, control_t *control)
         title.align = ALIGN_LEFT_NONE;
         widget_textbox(display, &title);
 
-        FREE(title_str_bfr);
-
         //value
         value.color = GLCD_BLACK;
         value.mode = TEXT_SINGLE_LINE;
@@ -720,8 +710,6 @@ void screen_encoder(uint8_t display_id, control_t *control)
         value.right_margin = 2;
         value.align = ALIGN_RIGHT_NONE;
         widget_textbox(display, &value);
-
-        FREE (unit_str_bfr);
 
         bar_t volume_bar;
         volume_bar.x = 2;
@@ -810,7 +798,7 @@ void screen_footer(uint8_t id, const char *name, const char *value, int16_t prop
     else if (property & (FLAG_CONTROL_TOGGLED | FLAG_CONTROL_BYPASS | FLAG_CONTROL_TRIGGER | FLAG_CONTROL_MOMENTARY))
     {
     	// draws the name field
-    	char *title_str_bfr = (char *) MALLOC(16 * sizeof(char));
+    	char title_str_bfr[16];
     	textbox_t footer;
     	footer.color = GLCD_BLACK;
     	footer.mode = TEXT_SINGLE_LINE;
@@ -827,7 +815,6 @@ void screen_footer(uint8_t id, const char *name, const char *value, int16_t prop
     	footer.y = 0;
     	footer.align = align ? ALIGN_RCENTER_BOTTOM : ALIGN_LCENTER_BOTTOM;
     	widget_textbox(display, &footer);
-    	FREE(title_str_bfr);
 
 #ifndef FOOT_INV_BORDERS
     uint8_t foor_inv_box_L_x = 0;
@@ -925,8 +912,9 @@ void screen_footer(uint8_t id, const char *name, const char *value, int16_t prop
             }
         }
 
-        char *title_str_bfr = (char *) MALLOC((char_cnt_name + 1) * sizeof(char));
-        char *value_str_bfr = (char *) MALLOC((char_cnt_value + 1) * sizeof(char));
+        // the name and the value are cut to 14 characters together
+        char title_str_bfr[15];
+        char value_str_bfr[15];
 
         // draws the name field
         textbox_t footer;
@@ -945,7 +933,6 @@ void screen_footer(uint8_t id, const char *name, const char *value, int16_t prop
         footer.y = 0;
         footer.align = align ? ALIGN_RLEFT_BOTTOM : ALIGN_LEFT_BOTTOM;
         widget_textbox(display, &footer);
-        FREE(title_str_bfr);
 
         // draws the value field
         footer.width = 0;
@@ -955,21 +942,14 @@ void screen_footer(uint8_t id, const char *name, const char *value, int16_t prop
         footer.text = value_str_bfr;
         footer.align = align ? ALIGN_RIGHT_BOTTOM : ALIGN_LRIGHT_BOTTOM;
         widget_textbox(display, &footer);
-        FREE(value_str_bfr);
     }
 }
 
 void screen_top_info(const void *data, uint8_t update)
 {
-    static char* pedalboard_name = NULL;
+    static char pedalboard_name[32] = "default";
 
     glcd_t *display = hardware_glcds(0);
-
-    if (pedalboard_name == NULL)
-    {
-        pedalboard_name = (char *) MALLOC(32 * sizeof(char));
-        strcpy(pedalboard_name, "default");
-    }
 
     if (update)
     {
@@ -1389,7 +1369,7 @@ void screen_widget_overlay(uint8_t display, int8_t style, char *header, char *te
     glcd_rect(hardware_display, 0, 10, 128, 43, GLCD_BLACK);
 
     //draw title
-    char *title_str_bfr = (char *) MALLOC(16 * sizeof(char));
+    char title_str_bfr[16];
     textbox_t title;
     title.color = GLCD_BLACK;
     title.mode = TEXT_SINGLE_LINE;
@@ -1406,7 +1386,6 @@ void screen_widget_overlay(uint8_t display, int8_t style, char *header, char *te
     title.y = 15;
     title.align = ALIGN_CENTER_NONE;
     widget_textbox(hardware_display, &title);
-    FREE(title_str_bfr);
 
     //draw line between title and text
     glcd_rect(hardware_display, 0, 27, 128, 1, GLCD_BLACK);
@@ -1415,7 +1394,7 @@ void screen_widget_overlay(uint8_t display, int8_t style, char *header, char *te
     glcd_rect_invert(hardware_display, 2, 12, 124, 14);
 
     //draw popup text
-    char *text_str_bfr = (char *) MALLOC(16 * sizeof(char));
+    char text_str_bfr[16];
     textbox_t popup_text;
     popup_text.color = GLCD_BLACK;
     popup_text.mode = TEXT_SINGLE_LINE;
@@ -1432,7 +1411,6 @@ void screen_widget_overlay(uint8_t display, int8_t style, char *header, char *te
     popup_text.y = 36;
     popup_text.align = ALIGN_CENTER_NONE;
     widget_textbox(hardware_display, &popup_text);
-    FREE(text_str_bfr);
 
     //check if inversion is needed
     if (style) {
