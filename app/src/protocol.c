@@ -315,6 +315,8 @@ void protocol_init(void)
     protocol_add_command(CMD_DUO_BOOT, cb_boot);
     protocol_add_command(CMD_MENU_ITEM_CHANGE, cb_menu_item_changed);
     protocol_add_command(CMD_PEDALBOARD_CLEAR, cb_pedalboard_clear);
+    protocol_add_command(CMD_PEDALBOARD_LOADING_BEGIN, cb_pedalboard_load_begin);
+    protocol_add_command(CMD_PEDALBOARD_LOADING_END, cb_pedalboard_load_end);
     protocol_add_command(CMD_PEDALBOARD_NAME_SET, cb_pedalboard_name);
     protocol_add_command(CMD_DUOX_PAGES_AVAILABLE, cb_pages_available);
     protocol_add_command(CMD_SELFTEST_SAVE_POT_CALIBRATION, cb_save_pot_cal_val);
@@ -597,6 +599,21 @@ void cb_pedalboard_clear(uint8_t serial_id, proto_t *proto)
 
     //reset the page to page 1
     naveg_reset_page();
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+// the host brackets every pedalboard load with these; nothing on the HMI reacts to them yet
+void cb_pedalboard_load_begin(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+void cb_pedalboard_load_end(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
 
     protocol_send_response(CMD_RESPONSE, 0, proto);
 }

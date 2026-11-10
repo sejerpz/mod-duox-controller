@@ -106,6 +106,8 @@ void cb_restore(uint8_t serial_id, proto_t *proto);
 void cb_boot(uint8_t serial_id, proto_t *proto);
 void cb_menu_item_changed(uint8_t serial_id, proto_t *proto);
 void cb_pedalboard_clear(uint8_t serial_id, proto_t *proto);
+void cb_pedalboard_load_begin(uint8_t serial_id, proto_t *proto);
+void cb_pedalboard_load_end(uint8_t serial_id, proto_t *proto);
 void cb_pedalboard_name(uint8_t serial_id, proto_t *proto);
 void cb_pages_available(uint8_t serial_id, proto_t *proto);
 void cb_save_pot_cal_val(uint8_t serial_id, proto_t *proto);
