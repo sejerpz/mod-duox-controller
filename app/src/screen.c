@@ -1504,80 +1504,70 @@ void screen_plugin_map(const plugin_map_t *map, uint8_t loaded)
 }
 
 /*
- * BUILDER: the box under the cursor
+ * BUILDER: the plugins by name
  *
- * The graph cuts a box label to the width of the box; here it is the longer one mod-ui sends
- * for the title, broken over two lines at a space when it does not fit on one.
+ * Laid out like the banks list, the cursor inverted and the box selected in the graph marked
+ * with the arrow: the two encoders walk one each, so the cursor and the arrow part whenever
+ * the graph is on a hardware box, or has not caught up with the list yet.
  */
-void screen_plugin_details(const plugin_map_node_t *node)
+void screen_plugin_list(const plugin_list_t *list, const plugin_map_node_t *selected)
 {
+    static char *names[PLUGIN_LIST_MAX_ROWS];
     glcd_t *display = hardware_glcds(DISPLAY_RIGHT);
-    const char *kind;
-    char line[PLUGIN_MAP_TITLE_SIZE];
-    uint8_t per_line = DISPLAY_WIDTH / (Terminal5x7_WIDTH + 1);
-    uint8_t length, cut, y = 20;
+    char title[24];
+    uint8_t i, marked = 0xFF;
 
     glcd_clear(display, GLCD_WHITE);
 
-    if (!node)
+    // "PLUGINS", and where the cursor is in the whole list once there is one
+    strcpy(title, "PLUGINS");
+    if (list->loaded && list->total > 0)
     {
-        kind = "PEDALBOARD";
-    }
-    else if (node->kind == BM_HW_SOURCE)
-    {
-        kind = "INPUT";
-    }
-    else if (node->kind == BM_HW_SINK)
-    {
-        kind = "OUTPUT";
-    }
-    else
-    {
-        kind = "PLUGIN";
+        uint8_t length = strlen(title);
+        title[length++] = ' ';
+        length += int_to_str(list->hover + 1, &title[length], sizeof(title) - length, 0);
+        title[length++] = '/';
+        int_to_str(list->total, &title[length], sizeof(title) - length, 0);
     }
 
     textbox_t title_box = {};
     title_box.color = GLCD_BLACK;
     title_box.mode = TEXT_SINGLE_LINE;
     title_box.font = Terminal3x5;
-    title_box.top_margin = 1;
     title_box.align = ALIGN_CENTER_TOP;
-    title_box.text = kind;
+    title_box.text = title;
     widget_textbox(display, &title_box);
-    glcd_rect_invert(display, 0, 0, DISPLAY_WIDTH, 7);
 
-    if (!node) return;
+    // title line separator
+    glcd_hline(display, 0, 9, DISPLAY_WIDTH, GLCD_BLACK_WHITE);
 
-    strncpy(line, node->title, sizeof(line) - 1);
-    line[sizeof(line) - 1] = 0;
-    length = strlen(line);
-
-    // the last space that leaves the first line short enough, or a hard cut when there is none
-    cut = length;
-    if (length > per_line)
+    if (!list->loaded || list->count == 0)
     {
-        for (cut = per_line; cut > 0 && line[cut] != ' '; cut--);
-        if (cut == 0) cut = per_line;
+        static const char empty[] = "NO PLUGINS";
+        glcd_text(display, centred_x(Terminal5x7, empty), 33, empty, Terminal5x7, GLCD_BLACK);
+        return;
     }
 
-    if (cut < length)
+    for (i = 0; i < list->count; i++)
     {
-        const char *rest = &line[cut];
-        if (*rest == ' ') rest++;
-
-        glcd_text(display, centred_x(Terminal5x7, rest), y + 10, rest, Terminal5x7, GLCD_BLACK);
-        line[cut] = 0;
-    }
-    else
-    {
-        y += 5;
+        names[i] = (char *) list->rows[i].title;
+        if (selected && list->rows[i].id == selected->id) marked = i;
     }
 
-    glcd_text(display, centred_x(Terminal5x7, line), y, line, Terminal5x7, GLCD_BLACK);
-
-    if (node->kind == BM_PLUGIN && node->bypassed)
-    {
-        static const char bypassed[] = "BYPASSED";
-        glcd_text(display, centred_x(Terminal3x5, bypassed), 46, bypassed, Terminal3x5, GLCD_BLACK);
-    }
+    listbox_t list_box = {};
+    list_box.x = 0;
+    list_box.y = 11;
+    list_box.width = DISPLAY_WIDTH;
+    list_box.height = 53;
+    list_box.color = GLCD_BLACK;
+    list_box.hover = list->hover - list->first;
+    list_box.selected = marked;
+    list_box.count = list->count;
+    list_box.list = names;
+    list_box.font = Terminal3x5;
+    list_box.line_space = 2;
+    list_box.line_top_margin = 1;
+    list_box.line_bottom_margin = 1;
+    list_box.text_left_margin = 2;
+    widget_listbox(display, &list_box);
 }

@@ -7,8 +7,9 @@
 *           The menu tools stay on underneath the whole time, so nothing the host sends meanwhile
 *           draws a control over the graph.
 *
-*           Left display: the graph. Right display: the box under the cursor.
-*           ENC1 walks the boxes, BTN1 goes back to the menu.
+*           Left display: the graph. Right display: the plugins by name.
+*           ENC1 walks the graph and ENC2 the list, each following the other; BTN1 goes back to
+*           the menu.
 ************************************************************************************************************************
 */
 
