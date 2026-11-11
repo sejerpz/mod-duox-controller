@@ -16,6 +16,9 @@
 #include "hardware.h"
 #include "cli.h"
 #include "mod-protocol.h"
+#include "plugin_map.h"
+#include "glcd_clip.h"
+#include "mode_builder.h"
 
 /*
 ************************************************************************************************************************
@@ -1113,6 +1116,10 @@ void screen_system_menu(menu_item_t *item)
     if (!naveg_is_tool_mode(DISPLAY_TOOL_SYSTEM))
         return;
 
+    // the menu is still on under the builder, and must not draw over it
+    if (BM_is_active())
+        return;
+
     static menu_item_t *last_item = NULL;
 
     glcd_t *display;
@@ -1419,4 +1426,157 @@ void screen_widget_overlay(uint8_t display, int8_t style, char *header, char *te
 
     //update display
     glcd_update(hardware_glcds(display));
+}
+
+/*
+ * BUILDER: the outlines around the graph and the labels of the three buttons under it, in the
+ * Dwarf builder's geometry. A button with nothing to do has no box, and the bottom edge runs
+ * through where it would be.
+ */
+static void print_builder_buttons(glcd_t *display, const char *labels[3])
+{
+    uint8_t i;
+
+    glcd_vline(display, 0, 7, DISPLAY_HEIGHT - 11, GLCD_BLACK);
+    glcd_vline(display, DISPLAY_WIDTH - 1, 7, DISPLAY_HEIGHT - 11, GLCD_BLACK);
+    glcd_hline(display, 0, DISPLAY_HEIGHT - 5, DISPLAY_WIDTH, GLCD_BLACK);
+
+    for (i = 0; i < 3; i++)
+    {
+        uint8_t x = 14 + (i * 34);
+
+        if (!labels[i]) continue;
+
+        glcd_rect_fill(display, x, DISPLAY_HEIGHT - 9, 31, 9, GLCD_WHITE);
+        glcd_rect(display, x, DISPLAY_HEIGHT - 9, 31, 9, GLCD_BLACK);
+        glcd_text(display, x + (31 - glcd_text_width(Terminal3x5, labels[i])) / 2, DISPLAY_HEIGHT - 7,
+                  labels[i], Terminal3x5, GLCD_BLACK);
+    }
+}
+
+// left edge that centres a string, or the panel edge when it is wider than the panel
+static uint8_t centred_x(const uint8_t *font, const char *text)
+{
+    int16_t width = glcd_text_width(font, text);
+    return (width < DISPLAY_WIDTH) ? (DISPLAY_WIDTH - width) / 2 : 0;
+}
+
+static void print_empty_pedalboard(glcd_t *display)
+{
+    static const char first[] = "EMPTY";
+    static const char second[] = "PEDALBOARD";
+
+    glcd_text(display, centred_x(Terminal7x8, first), DISPLAY_HEIGHT / 2 - 10, first, Terminal7x8, GLCD_BLACK);
+    glcd_text(display, centred_x(Terminal7x8, second), DISPLAY_HEIGHT / 2, second, Terminal7x8, GLCD_BLACK);
+}
+
+/*
+ * BUILDER: draw the pedalboard graph
+ *
+ * The pedalboard name in the title bar, the graph in the viewport mode_builder.c set, and the
+ * buttons under it. plugin_map_draw() clips to the viewport, so nothing can spill over the
+ * button labels.
+ */
+void screen_plugin_map(const plugin_map_t *map, uint8_t loaded)
+{
+    glcd_t *display = hardware_glcds(DISPLAY_LEFT);
+    const char *labels[3] = {"BACK", NULL, NULL};
+
+    glcd_clear(display, GLCD_WHITE);
+
+    textbox_t title_box = {};
+    title_box.color = GLCD_BLACK;
+    title_box.mode = TEXT_SINGLE_LINE;
+    title_box.font = Terminal3x5;
+    title_box.top_margin = 1;
+    title_box.align = ALIGN_CENTER_TOP;
+    title_box.text = naveg_get_current_pb_name();
+    widget_textbox(display, &title_box);
+    glcd_rect_invert(display, 0, 0, DISPLAY_WIDTH, 7);
+
+    print_builder_buttons(display, labels);
+
+    if (loaded && map->n_nodes > 0)
+        plugin_map_draw(display, map);
+    else
+        print_empty_pedalboard(display);
+}
+
+/*
+ * BUILDER: the box under the cursor
+ *
+ * The graph cuts a box label to the width of the box; here it is the longer one mod-ui sends
+ * for the title, broken over two lines at a space when it does not fit on one.
+ */
+void screen_plugin_details(const plugin_map_node_t *node)
+{
+    glcd_t *display = hardware_glcds(DISPLAY_RIGHT);
+    const char *kind;
+    char line[PLUGIN_MAP_TITLE_SIZE];
+    uint8_t per_line = DISPLAY_WIDTH / (Terminal5x7_WIDTH + 1);
+    uint8_t length, cut, y = 20;
+
+    glcd_clear(display, GLCD_WHITE);
+
+    if (!node)
+    {
+        kind = "PEDALBOARD";
+    }
+    else if (node->kind == BM_HW_SOURCE)
+    {
+        kind = "INPUT";
+    }
+    else if (node->kind == BM_HW_SINK)
+    {
+        kind = "OUTPUT";
+    }
+    else
+    {
+        kind = "PLUGIN";
+    }
+
+    textbox_t title_box = {};
+    title_box.color = GLCD_BLACK;
+    title_box.mode = TEXT_SINGLE_LINE;
+    title_box.font = Terminal3x5;
+    title_box.top_margin = 1;
+    title_box.align = ALIGN_CENTER_TOP;
+    title_box.text = kind;
+    widget_textbox(display, &title_box);
+    glcd_rect_invert(display, 0, 0, DISPLAY_WIDTH, 7);
+
+    if (!node) return;
+
+    strncpy(line, node->title, sizeof(line) - 1);
+    line[sizeof(line) - 1] = 0;
+    length = strlen(line);
+
+    // the last space that leaves the first line short enough, or a hard cut when there is none
+    cut = length;
+    if (length > per_line)
+    {
+        for (cut = per_line; cut > 0 && line[cut] != ' '; cut--);
+        if (cut == 0) cut = per_line;
+    }
+
+    if (cut < length)
+    {
+        const char *rest = &line[cut];
+        if (*rest == ' ') rest++;
+
+        glcd_text(display, centred_x(Terminal5x7, rest), y + 10, rest, Terminal5x7, GLCD_BLACK);
+        line[cut] = 0;
+    }
+    else
+    {
+        y += 5;
+    }
+
+    glcd_text(display, centred_x(Terminal5x7, line), y, line, Terminal5x7, GLCD_BLACK);
+
+    if (node->kind == BM_PLUGIN && node->bypassed)
+    {
+        static const char bypassed[] = "BYPASSED";
+        glcd_text(display, centred_x(Terminal3x5, bypassed), 46, bypassed, Terminal3x5, GLCD_BLACK);
+    }
 }

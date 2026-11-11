@@ -19,6 +19,7 @@
 #include "calibration.h"
 #include "mod-protocol.h"
 #include "images.h"
+#include "mode_builder.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -1644,6 +1645,15 @@ static void menu_enter(uint8_t display_id)
         else if (g_current_main_item->desc->action_cb) g_current_main_item->desc->action_cb(g_current_main_item, MENU_EV_ENTER);
     }
 
+    // the builder takes both displays over the menu, which stays on underneath
+    if (item->desc->id == PEDALBOARD_EDIT_ID)
+    {
+        g_update_cb = NULL;
+        g_update_data = NULL;
+        BM_enter();
+        return;
+    }
+
     // FIXME: that's dirty, so dirty...
     if (item->desc->id == BANKS_ID)
     {
@@ -2204,6 +2214,8 @@ void naveg_init(void)
     // first xSemaphoreTake pass even if semaphore has not been given
     // http://sourceforge.net/p/freertos/discussion/382005/thread/04bfabb9
     xSemaphoreTake(g_dialog_sem, 0);
+
+    BM_init();
 }
 
 uint8_t naveg_get_actuator_type(uint8_t hw_id)
@@ -2287,6 +2299,18 @@ void naveg_wait_for_ui(void)
     screen_image(1, mod_duo);
 }
 
+/*
+ * The builder is gone and the menu it was opened from is still on underneath: put it back
+ * on both displays.
+ */
+void naveg_builder_left(void)
+{
+    if (!tool_is_on(DISPLAY_TOOL_SYSTEM)) return;
+
+    screen_system_menu(g_current_main_item);
+    screen_system_menu(g_current_item);
+}
+
 void naveg_ui_booted(void)
 {
     if (!g_waiting_for_ui) return;
@@ -2316,6 +2340,9 @@ void naveg_ui_connection(uint8_t status)
         g_naveg_pedalboards = NULL;
     }
 
+
+    // called from a protocol callback: the builder goes without a word to the host
+    BM_drop(0);
 
     if ((tool_is_on(DISPLAY_TOOL_NAVIG)) || tool_is_on(DISPLAY_TOOL_SYSTEM))
     {
@@ -2978,6 +3005,14 @@ void naveg_foot_change(uint8_t foot, uint8_t pressed)
     // checks the foot id
     if (foot >= FOOTSWITCHES_COUNT) return;
 
+    // the three buttons are the builder's while it is up, the footswitches nobody's
+    if (BM_is_active())
+    {
+        if (pressed && foot >= FOOTSWITCHES_ACTUATOR_COUNT)
+            BM_button_pressed(foot - FOOTSWITCHES_ACTUATOR_COUNT);
+        return;
+    }
+
     if (display_has_tool_enabled(get_display_by_id(foot, FOOT))) return;
 
     switch (foot)
@@ -3365,6 +3400,9 @@ void naveg_toggle_tool(uint8_t tool, uint8_t display)
 {
     if (!g_initialized) return;
 
+    // the builder is left with BACK, a hold has nothing to do there yet
+    if (BM_is_active()) return;
+
     //no tools in selftest
     if (g_self_test_mode)
     {
@@ -3600,6 +3638,12 @@ void naveg_enter(uint8_t display)
 
     if ((!g_initialized)&&(g_update_cb)) return;
 
+    if (BM_is_active())
+    {
+        BM_encoder_click(display);
+        return;
+    }
+
     if (display_has_tool_enabled(display))
     {
         if (display == 0)
@@ -3649,6 +3693,12 @@ void naveg_up(uint8_t display)
         // send the data to GUI
         ui_comm_webgui_send(buffer, i);
 
+        return;
+    }
+
+    if (BM_is_active())
+    {
+        BM_up(display);
         return;
     }
 
@@ -3712,6 +3762,12 @@ void naveg_down(uint8_t display)
         // send the data to GUI
         ui_comm_webgui_send(buffer, i);
 
+        return;
+    }
+
+    if (BM_is_active())
+    {
+        BM_down(display);
         return;
     }
 

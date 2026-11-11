@@ -29,6 +29,7 @@
 #include "calibration.h"
 #include "uc1701.h"
 #include "fonts.h"
+#include "mode_builder.h"
 
 /*
 ************************************************************************************************************************
@@ -266,6 +267,9 @@ static void displays_task(void *pvParameters)
         // update GLCD
         glcd_update(hardware_glcds(i));
         if (++i == GLCD_COUNT) i = 0;
+
+        //the builder refetches a graph the host changed, from here where it may send a command
+        BM_tick();
 
         //check if nav mode needs update
         if (naveg_get_pb_list_update()){

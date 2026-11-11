@@ -19,6 +19,7 @@
 #include "cli.h"
 #include "calibration.h"
 #include "mod-protocol.h"
+#include "mode_builder.h"
 
 /*
 ************************************************************************************************************************
@@ -317,6 +318,7 @@ void protocol_init(void)
     protocol_add_command(CMD_PEDALBOARD_CLEAR, cb_pedalboard_clear);
     protocol_add_command(CMD_PEDALBOARD_LOADING_BEGIN, cb_pedalboard_load_begin);
     protocol_add_command(CMD_PEDALBOARD_LOADING_END, cb_pedalboard_load_end);
+    protocol_add_command(CMD_BUILDER_PLUGIN_UPDATED, cb_plugin_map_updated);
     protocol_add_command(CMD_PEDALBOARD_NAME_SET, cb_pedalboard_name);
     protocol_add_command(CMD_DUOX_PAGES_AVAILABLE, cb_pages_available);
     protocol_add_command(CMD_SELFTEST_SAVE_POT_CALIBRATION, cb_save_pot_cal_val);
@@ -542,6 +544,9 @@ void cb_boot(uint8_t serial_id, proto_t *proto)
     g_self_test_mode = false;
     g_self_test_cancel_button = false;
 
+    // the host has come back up and knows nothing of a builder it was showing
+    BM_drop(1);
+
     //set the quick bypass link
     system_update_menu_value(MENU_ID_QUICK_BYPASS, atoi(proto->list[2]));
 
@@ -606,12 +611,20 @@ void cb_pedalboard_clear(uint8_t serial_id, proto_t *proto)
     protocol_send_response(CMD_RESPONSE, 0, proto);
 }
 
-// the host brackets every pedalboard load with these; nothing on the HMI reacts to them yet
+/*
+ * The two edges of a pedalboard load, whoever asked for it. Everything between them is a
+ * board in pieces, so the builder, which is a view onto the board, is left rather than
+ * redrawn around a graph that no longer holds.
+ */
 void cb_pedalboard_load_begin(uint8_t serial_id, proto_t *proto)
 {
     UNUSED_PARAM(serial_id);
 
     protocol_send_response(CMD_RESPONSE, 0, proto);
+
+    // the host stops watching the board on its own when a load starts, so this leaves
+    // without saying anything: nothing may be sent from inside a callback
+    BM_drop(1);
 }
 
 void cb_pedalboard_load_end(uint8_t serial_id, proto_t *proto)
@@ -619,6 +632,19 @@ void cb_pedalboard_load_end(uint8_t serial_id, proto_t *proto)
     UNUSED_PARAM(serial_id);
 
     protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+/*
+ * The board changed under the builder -- edited from the web UI, most of the time. Only a
+ * flag here: fetching the graph is a command of its own, and a callback cannot send one.
+ */
+void cb_plugin_map_updated(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+
+    BM_plugin_map_stale();
 }
 
 void cb_pedalboard_name(uint8_t serial_id, proto_t *proto)

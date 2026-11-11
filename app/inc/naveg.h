@@ -139,6 +139,8 @@ uint8_t naveg_dialog(const char *msg, char *title);
 uint8_t naveg_ui_status(void);
 // the web interface is restarting: logo on both displays, controls ignored until boot
 void naveg_wait_for_ui(void);
+// the builder has given the panel back to the menu
+void naveg_builder_left(void);
 // boot received: if the web interface was restarting, the control view comes back
 void naveg_ui_booted(void);
 void naveg_pages_available(uint8_t page_1, uint8_t page_2, uint8_t page_3, uint8_t page_4, uint8_t page_5, uint8_t page_6);

@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include "config.h"
 #include "data.h"
+#include "plugin_map.h"
 
 
 /*
@@ -76,6 +77,10 @@ void screen_top_info(const void *data, uint8_t update);
 void screen_master_vol(float volume_val);
 void screen_text_box(uint8_t display, uint8_t x, uint8_t y, const char *text);
 void screen_widget_overlay(uint8_t display, int8_t style, char *header, char *text);
+
+// the builder: the pedalboard graph on the left display, the box under the cursor on the right
+void screen_plugin_map(const plugin_map_t *map, uint8_t loaded);
+void screen_plugin_details(const plugin_map_node_t *node);
 
 /*
 ************************************************************************************************************************
