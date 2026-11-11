@@ -488,9 +488,11 @@ static void display_pot_rm(uint8_t hw_id)
     for (i = 0; i < POTS_COUNT; i++)
     {
         // if there is no controls assigned, load the default screen
-        if (!g_pots[i] && !display_has_tool_enabled(get_display_by_id(i, POTENTIOMETER)))
+        if (!g_pots[i])
         {
-            screen_pot(i, NULL);
+            // nothing to remove; redraw it unless a menu or the builder covers its display
+            if (!display_has_tool_enabled(get_display_by_id(i, POTENTIOMETER)))
+                screen_pot(i, NULL);
             continue;
         }
 
