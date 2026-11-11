@@ -66,6 +66,9 @@ enum {BANKS_LIST, PEDALBOARD_LIST};
 static tuner_t g_tuner = {0, NULL, 0, 1};
 static uint8_t g_hide_non_assigned_actuators = 0;
 
+// the loaded pedalboard, as the host last named it; the top bar and the builder title show it
+static char g_pedalboard_name[32] = "default";
+
 
 /*
 ************************************************************************************************************************
@@ -950,8 +953,6 @@ void screen_footer(uint8_t id, const char *name, const char *value, int16_t prop
 
 void screen_top_info(const void *data, uint8_t update)
 {
-    static char pedalboard_name[32] = "default";
-
     glcd_t *display = hardware_glcds(0);
 
     if (update)
@@ -960,19 +961,19 @@ void screen_top_info(const void *data, uint8_t update)
 
         // get first list name, copy it to our string buffer
         const char *name_string = *name_list;
-        strncpy(pedalboard_name, name_string, 31);
-        pedalboard_name[31] = 0; // strncpy might not have final null byte
+        strncpy(g_pedalboard_name, name_string, 31);
+        g_pedalboard_name[31] = 0; // strncpy might not have final null byte
 
         // go to next name in list
         name_string = *(++name_list);
 
-        while (name_string && ((strlen(pedalboard_name) + strlen(name_string) + 1) < 31))
+        while (name_string && ((strlen(g_pedalboard_name) + strlen(name_string) + 1) < 31))
         {
-            strcat(pedalboard_name, " ");
-            strcat(pedalboard_name, name_string);
+            strcat(g_pedalboard_name, " ");
+            strcat(g_pedalboard_name, name_string);
             name_string = *(++name_list);
         }
-        pedalboard_name[31] = 0;
+        g_pedalboard_name[31] = 0;
     }
 
     //we dont display inside a menu
@@ -991,7 +992,7 @@ void screen_top_info(const void *data, uint8_t update)
     title.right_margin = 0;
     title.height = 0;
     title.width = 0;
-    title.text = pedalboard_name;
+    title.text = g_pedalboard_name;
     title.align = ALIGN_CENTER_TOP;
     title.y = 0;
     title.x = 1;
@@ -1490,7 +1491,7 @@ void screen_plugin_map(const plugin_map_t *map, uint8_t loaded)
     title_box.font = Terminal3x5;
     title_box.top_margin = 1;
     title_box.align = ALIGN_CENTER_TOP;
-    title_box.text = naveg_get_current_pb_name();
+    title_box.text = g_pedalboard_name;
     widget_textbox(display, &title_box);
     glcd_rect_invert(display, 0, 0, DISPLAY_WIDTH, 7);
 
