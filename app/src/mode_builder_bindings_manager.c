@@ -66,6 +66,13 @@ static uint16_t g_param_first;
 static int16_t g_param_hover;           /* absolute, not window relative */
 
 /*
+ * Where each row of the window is bound, as page * BB_MAX_ACTUATORS + slot, or BM_NONE. The
+ * row is marked for it, and the second column goes to that slot when the cursor gets there.
+ */
+static int16_t g_param_bound[BB_MAX_PARAMS];
+static uint8_t g_param_marked[BB_MAX_PARAMS];
+
+/*
  * The page of the board, zero based here and drawn one based over the second column. Not
  * a column of its own: it is one number, and a heading is what a single number wants.
  */
@@ -212,6 +219,27 @@ static void parse_params(void *data, menu_item_t *item)
 
         g_param_rows[g_param_count] = g_param_text[g_param_count];
         g_param_count++;
+    }
+
+    // then where each of them is bound, "page,slot" or "-"; a host that does not say leaves
+    // them all unbound
+    for (i = 0; i < g_param_count; i++) g_param_bound[i] = BM_NONE;
+
+    // the list ends on the first NULL, and nothing past it may be read
+    for (i = 0; g_param_count == count && i < count && list[5 + count + i]; i++)
+    {
+        const char *where = list[5 + count + i];
+        const char *comma;
+        int page, slot;
+
+        comma = strchr(where, ',');
+        if (!comma) continue;
+
+        page = atoi(where);
+        slot = atoi(comma + 1);
+
+        if (page >= 0 && page < BB_MAX_PAGES && slot >= 0 && slot < BB_MAX_ACTUATORS)
+            g_param_bound[i] = (int16_t)(page * BB_MAX_ACTUATORS + slot);
     }
 }
 
@@ -377,6 +405,43 @@ static void build_page_title(void)
 }
 
 /* slides the parameter window when the hover has walked off either end of it */
+/*
+ * The second column to where the parameter under the cursor is bound: its page, and the
+ * slot on it. Left where it is for one that is bound nowhere.
+ */
+static void follow_binding(void)
+{
+    int16_t row = g_param_hover - (int16_t) g_param_first;
+    int16_t bound;
+    uint8_t page;
+
+    if (row < 0 || row >= (int16_t) g_param_count) return;
+
+    bound = g_param_bound[row];
+    if (bound == BM_NONE) return;
+
+    page = (uint8_t)(bound / BB_MAX_ACTUATORS);
+    if (page != g_page)
+    {
+        g_page = page;
+        build_page_title();
+        request_bindings();
+    }
+
+    if ((bound % BB_MAX_ACTUATORS) < (int16_t) g_act_count)
+        g_act_hover = bound % BB_MAX_ACTUATORS;
+}
+
+/* the window rows bound to one slot of the page in the heading, which a bind or a DEL there frees */
+static void unbind_rows_at(int16_t slot)
+{
+    uint8_t i;
+    int16_t bound = (int16_t)(g_page * BB_MAX_ACTUATORS + slot);
+
+    for (i = 0; i < g_param_count; i++)
+        if (g_param_bound[i] == bound) g_param_bound[i] = BM_NONE;
+}
+
 static void follow_hover(void)
 {
     if (g_param_total == 0) return;
@@ -432,6 +497,7 @@ void BM_bindings_manager_open(plugin_map_t *map)
     request_params(0);
     request_actuators();
     request_bindings();
+    follow_binding();
 }
 
 uint8_t BM_bindings_manager_is_open(void)
@@ -456,6 +522,7 @@ void BM_bindings_manager_turn(uint8_t encoder, int8_t step)
     {
         g_param_hover += step;
         follow_hover();
+        follow_binding();
         return;
     }
 
@@ -510,7 +577,16 @@ void BM_bindings_manager_add(void)
         g_act_taken[g_freed] = 0;
 
     if (g_act_hover >= 0 && g_act_hover < (int16_t) g_act_count)
+    {
+        int16_t row = g_param_hover - (int16_t) g_param_first;
+
         g_act_taken[g_act_hover] = 1;
+
+        // whatever was on the slot comes off it, and the parameter goes on
+        unbind_rows_at(g_act_hover);
+        if (row >= 0 && row < (int16_t) g_param_count)
+            g_param_bound[row] = (int16_t)(g_page * BB_MAX_ACTUATORS + g_act_hover);
+    }
 }
 
 void BM_bindings_manager_del(void)
@@ -542,6 +618,7 @@ void BM_bindings_manager_del(void)
 
     // emptied, for the same reason the bind marks rather than reads back
     g_act_taken[g_act_hover] = 0;
+    unbind_rows_at(g_act_hover);
 }
 
 uint8_t BM_bindings_manager_take_changed(void)
@@ -571,6 +648,8 @@ void BM_bindings_manager_fill(bindings_t *model)
 
     model->params = g_param_rows;
     model->param_count = g_param_count;
+    for (i = 0; i < g_param_count; i++) g_param_marked[i] = (g_param_bound[i] != BM_NONE);
+    model->param_bound = g_param_marked;
     // the column widget works in the rows it holds, so the hover is window relative
     model->param_hover = g_param_hover - (int16_t) g_param_first;
 

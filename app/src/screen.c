@@ -1769,6 +1769,8 @@ void screen_plugin_params(const plugin_params_t *params)
  * display what the second walks, the whole height below its title.
  */
 #define BUILDER_RIGHT_LIST_Y    9
+// rows of the parameter column in the bindings screen: the window the manager asks the host for
+#define BUILDER_BIND_MAX_PARAMS 24
 #define BUILDER_RIGHT_LIST_H    55
 
 static void print_builder_list(glcd_t *display, uint8_t x, uint8_t y, uint8_t width, uint8_t height,
@@ -2170,8 +2172,25 @@ void screen_bindings(const bindings_t *model)
     }
 
     glcd_clear(display, GLCD_WHITE);
-    print_builder_list(display, 2, 9, DISPLAY_WIDTH - 4, 42, model->params, model->param_count,
-                       model->param_hover);
+
+    // a parameter bound somewhere is marked the way a taken slot is
+    {
+        static char marked[BUILDER_BIND_MAX_PARAMS][24];
+        static char *rows[BUILDER_BIND_MAX_PARAMS];
+        uint8_t i, count = model->param_count;
+
+        if (count > BUILDER_BIND_MAX_PARAMS) count = BUILDER_BIND_MAX_PARAMS;
+
+        for (i = 0; i < count; i++)
+        {
+            strncpy(marked[i], model->params[i], sizeof(marked[i]) - 3);
+            marked[i][sizeof(marked[i]) - 3] = 0;
+            if (model->param_bound && model->param_bound[i]) strcat(marked[i], " *");
+            rows[i] = marked[i];
+        }
+
+        print_builder_list(display, 2, 9, DISPLAY_WIDTH - 4, 42, rows, count, model->param_hover);
+    }
     print_builder_title(display, chrome.title ? chrome.title : "BINDINGS");
     print_builder_buttons(display, &chrome);
 

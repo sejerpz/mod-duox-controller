@@ -118,6 +118,8 @@ typedef struct {
     char **params;
     uint8_t param_count;
     int16_t param_hover;
+    /* one per row above: the parameter is bound, on this page or another */
+    const uint8_t *param_bound;
 
     /* which page of the board, as a heading over the second column */
     const char *page;
