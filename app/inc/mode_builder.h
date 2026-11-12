@@ -7,9 +7,9 @@
 *           The menu tools stay on underneath the whole time, so nothing the host sends meanwhile
 *           draws a control over the graph.
 *
-*           Left display: the graph. Right display: the plugins by name.
-*           ENC1 walks the graph and ENC2 the list, each following the other; BTN1 goes back to
-*           the menu.
+*           Left display: the graph, or the plugins by name when the board is too big to find a
+*           box in the picture; holding ENC1 switches between the two. Right display: the box
+*           under the cursor. ENC1 walks the view on the left, BTN1 goes back to the menu.
 ************************************************************************************************************************
 */
 
@@ -64,6 +64,7 @@ void BM_drop(uint8_t restore_menu);
 void BM_up(uint8_t encoder);
 void BM_down(uint8_t encoder);
 void BM_encoder_click(uint8_t encoder);
+void BM_encoder_hold(uint8_t encoder);
 void BM_button_pressed(uint8_t button);
 
 // The host says the board changed. Only a flag: the refetch happens in BM_tick().

@@ -3402,8 +3402,12 @@ void naveg_toggle_tool(uint8_t tool, uint8_t display)
 {
     if (!g_initialized) return;
 
-    // the builder is left with BACK, a hold has nothing to do there yet
-    if (BM_is_active()) return;
+    // an encoder hold is the builder's while it is up, not the menu's
+    if (BM_is_active())
+    {
+        BM_encoder_hold(display);
+        return;
+    }
 
     //no tools in selftest
     if (g_self_test_mode)

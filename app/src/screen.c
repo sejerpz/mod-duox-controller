@@ -1472,96 +1472,41 @@ static void print_empty_pedalboard(glcd_t *display)
 }
 
 /*
- * BUILDER: draw the pedalboard graph
+ * BUILDER: the list view, the plugins by name in the viewport of the graph
  *
- * The pedalboard name in the title bar, the graph in the viewport mode_builder.c set, and the
- * buttons under it. plugin_map_draw() clips to the viewport, so nothing can spill over the
- * button labels.
+ * Drawn the way the banks list is, by widget_listbox(), with the cursor inverted. The title
+ * says where the cursor is in the whole list, of which only a window is held.
  */
-void screen_plugin_map(const plugin_map_t *map, uint8_t loaded)
-{
-    glcd_t *display = hardware_glcds(DISPLAY_LEFT);
-    const char *labels[3] = {"BACK", NULL, NULL};
-
-    glcd_clear(display, GLCD_WHITE);
-
-    textbox_t title_box = {};
-    title_box.color = GLCD_BLACK;
-    title_box.mode = TEXT_SINGLE_LINE;
-    title_box.font = Terminal3x5;
-    title_box.top_margin = 1;
-    title_box.align = ALIGN_CENTER_TOP;
-    title_box.text = g_pedalboard_name;
-    widget_textbox(display, &title_box);
-    glcd_rect_invert(display, 0, 0, DISPLAY_WIDTH, 7);
-
-    print_builder_buttons(display, labels);
-
-    if (loaded && map->n_nodes > 0)
-        plugin_map_draw(display, map);
-    else
-        print_empty_pedalboard(display);
-}
-
-/*
- * BUILDER: the plugins by name
- *
- * Laid out like the banks list, the cursor inverted and the box selected in the graph marked
- * with the arrow: the two encoders walk one each, so the cursor and the arrow part whenever
- * the graph is on a hardware box, or has not caught up with the list yet.
- */
-void screen_plugin_list(const plugin_list_t *list, const plugin_map_node_t *selected)
+static void print_plugin_list(glcd_t *display, const glcd_rect_t *view, const plugin_list_t *list,
+                              char *title, uint8_t title_size)
 {
     static char *names[PLUGIN_LIST_MAX_ROWS];
-    glcd_t *display = hardware_glcds(DISPLAY_RIGHT);
-    char title[24];
-    uint8_t i, marked = 0xFF;
+    uint8_t i, length;
 
-    glcd_clear(display, GLCD_WHITE);
+    length = strlen(title);
+    title[length++] = ' ';
+    length += int_to_str(list->hover + 1, &title[length], title_size - length, 0);
+    title[length++] = '/';
+    int_to_str(list->total, &title[length], title_size - length, 0);
 
-    // "PLUGINS", and where the cursor is in the whole list once there is one
-    strcpy(title, "PLUGINS");
-    if (list->loaded && list->total > 0)
-    {
-        uint8_t length = strlen(title);
-        title[length++] = ' ';
-        length += int_to_str(list->hover + 1, &title[length], sizeof(title) - length, 0);
-        title[length++] = '/';
-        int_to_str(list->total, &title[length], sizeof(title) - length, 0);
-    }
-
-    textbox_t title_box = {};
-    title_box.color = GLCD_BLACK;
-    title_box.mode = TEXT_SINGLE_LINE;
-    title_box.font = Terminal3x5;
-    title_box.align = ALIGN_CENTER_TOP;
-    title_box.text = title;
-    widget_textbox(display, &title_box);
-
-    // title line separator
-    glcd_hline(display, 0, 9, DISPLAY_WIDTH, GLCD_BLACK_WHITE);
-
-    if (!list->loaded || list->count == 0)
+    if (list->count == 0)
     {
         static const char empty[] = "NO PLUGINS";
-        glcd_text(display, centred_x(Terminal5x7, empty), 33, empty, Terminal5x7, GLCD_BLACK);
+        glcd_text(display, centred_x(Terminal5x7, empty), 27, empty, Terminal5x7, GLCD_BLACK);
         return;
     }
 
     for (i = 0; i < list->count; i++)
-    {
         names[i] = (char *) list->rows[i].title;
-        if (selected && list->rows[i].id == selected->id) marked = i;
-    }
 
     listbox_t list_box = {};
-    list_box.x = 0;
-    list_box.y = 11;
-    list_box.width = DISPLAY_WIDTH;
-    list_box.height = 53;
+    list_box.x = view->x;
+    list_box.y = view->y;
+    list_box.width = view->width;
+    list_box.height = view->height - 1;
     list_box.color = GLCD_BLACK;
     list_box.hover = list->hover - list->first;
-    list_box.selected = marked;
+    list_box.selected = 0xFF;
     list_box.count = list->count;
     list_box.list = names;
     list_box.font = Terminal3x5;
@@ -1570,4 +1515,122 @@ void screen_plugin_list(const plugin_list_t *list, const plugin_map_node_t *sele
     list_box.line_bottom_margin = 1;
     list_box.text_left_margin = 2;
     widget_listbox(display, &list_box);
+}
+
+/*
+ * BUILDER: draw the pedalboard graph, or the list in its place
+ *
+ * The pedalboard name in the title bar, the graph in the viewport mode_builder.c set, and the
+ * buttons under it. plugin_map_draw() clips to the viewport, so nothing can spill over the
+ * button labels.
+ */
+void screen_plugin_map(const plugin_map_t *map, uint8_t loaded, const plugin_list_t *list)
+{
+    glcd_t *display = hardware_glcds(DISPLAY_LEFT);
+    const char *labels[3] = {"BACK", NULL, NULL};
+    char title[32];
+
+    glcd_clear(display, GLCD_WHITE);
+
+    strcpy(title, "PLUGINS");
+    if (list)
+        print_plugin_list(display, &map->view, list, title, sizeof(title));
+
+    textbox_t title_box = {};
+    title_box.color = GLCD_BLACK;
+    title_box.mode = TEXT_SINGLE_LINE;
+    title_box.font = Terminal3x5;
+    title_box.top_margin = 1;
+    title_box.align = ALIGN_CENTER_TOP;
+    title_box.text = list ? title : g_pedalboard_name;
+    widget_textbox(display, &title_box);
+    glcd_rect_invert(display, 0, 0, DISPLAY_WIDTH, 7);
+
+    print_builder_buttons(display, labels);
+
+    if (list) return;
+
+    if (loaded && map->n_nodes > 0)
+        plugin_map_draw(display, map);
+    else
+        print_empty_pedalboard(display);
+}
+
+/*
+ * BUILDER: the box under the cursor
+ *
+ * The graph cuts a box label to the width of the box; here it is the longer title mod-ui sends
+ * for it, broken over two lines at a space when it does not fit on one.
+ */
+void screen_plugin_details(const char *name, uint8_t kind_id, uint8_t bypassed)
+{
+    glcd_t *display = hardware_glcds(DISPLAY_RIGHT);
+    const char *kind;
+    char line[PLUGIN_MAP_TITLE_SIZE];
+    uint8_t per_line = DISPLAY_WIDTH / (Terminal5x7_WIDTH + 1);
+    uint8_t length, cut, y = 20;
+
+    glcd_clear(display, GLCD_WHITE);
+
+    if (!name)
+    {
+        kind = "PEDALBOARD";
+    }
+    else if (kind_id == BM_HW_SOURCE)
+    {
+        kind = "INPUT";
+    }
+    else if (kind_id == BM_HW_SINK)
+    {
+        kind = "OUTPUT";
+    }
+    else
+    {
+        kind = "PLUGIN";
+    }
+
+    textbox_t title_box = {};
+    title_box.color = GLCD_BLACK;
+    title_box.mode = TEXT_SINGLE_LINE;
+    title_box.font = Terminal3x5;
+    title_box.top_margin = 1;
+    title_box.align = ALIGN_CENTER_TOP;
+    title_box.text = kind;
+    widget_textbox(display, &title_box);
+    glcd_rect_invert(display, 0, 0, DISPLAY_WIDTH, 7);
+
+    if (!name) return;
+
+    strncpy(line, name, sizeof(line) - 1);
+    line[sizeof(line) - 1] = 0;
+    length = strlen(line);
+
+    // the last space that leaves the first line short enough, or a hard cut when there is none
+    cut = length;
+    if (length > per_line)
+    {
+        for (cut = per_line; cut > 0 && line[cut] != ' '; cut--);
+        if (cut == 0) cut = per_line;
+    }
+
+    if (cut < length)
+    {
+        const char *rest = &line[cut];
+        if (*rest == ' ') rest++;
+
+        glcd_text(display, centred_x(Terminal5x7, rest), y + 10, rest, Terminal5x7, GLCD_BLACK);
+        line[cut] = 0;
+    }
+    else
+    {
+        y += 5;
+    }
+
+    glcd_text(display, centred_x(Terminal5x7, line), y, line, Terminal5x7, GLCD_BLACK);
+
+    if (kind_id == BM_PLUGIN && bypassed)
+    {
+        static const char bypassed[] = "BYPASSED";
+        glcd_text(display, centred_x(Terminal3x5, bypassed), 46, bypassed, Terminal3x5, GLCD_BLACK);
+    }
 }

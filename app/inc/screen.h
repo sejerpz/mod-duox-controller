@@ -78,10 +78,10 @@ void screen_master_vol(float volume_val);
 void screen_text_box(uint8_t display, uint8_t x, uint8_t y, const char *text);
 void screen_widget_overlay(uint8_t display, int8_t style, char *header, char *text);
 
-// the builder: the pedalboard graph on the left display, the plugins by name on the right,
-// the box selected in the graph marked in the list
-void screen_plugin_map(const plugin_map_t *map, uint8_t loaded);
-void screen_plugin_list(const plugin_list_t *list, const plugin_map_node_t *selected);
+// the builder: the pedalboard graph on the left display, or the plugins by name when <list> is
+// given, and the box under the cursor on the right; a NULL <name> is no box at all
+void screen_plugin_map(const plugin_map_t *map, uint8_t loaded, const plugin_list_t *list);
+void screen_plugin_details(const char *name, uint8_t kind, uint8_t bypassed);
 
 /*
 ************************************************************************************************************************

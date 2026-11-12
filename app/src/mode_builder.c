@@ -39,9 +39,9 @@
 // for before fewer than this many are left either way.
 #define PLUGIN_LIST_ROWS_AROUND 4
 
-// The graph follows the list cursor once the encoder has been still this long, in ms, when
-// the box is outside the window of the graph in hand: one fetch per step would make the list
-// crawl, and the graph is not where the eye is while the list is turning.
+// The graph's selection follows the list cursor once the encoder has been still this long, in
+// ms, when the box is outside the window of the graph in hand: one fetch per step would make
+// the list crawl.
 #define PLUGIN_LIST_SYNC_DELAY 250
 
 
@@ -62,12 +62,15 @@ static plugin_map_t g_plugin_map;
 static uint8_t g_plugin_map_loaded = 0;
 
 /*
- * The list on the right display: every plugin on the board by name, which mod-ui sends a
- * window at a time. Not taken from the graph's window, whose boxes are the ones around the
+ * The list view: every plugin on the board by name, which mod-ui sends a window at a time.
+ * The left display shows it in place of the graph when the board is too big to find a box
+ * in the picture. Not taken from the graph's window, whose boxes are the ones around the
  * selection -- their alphabetical neighbours are anywhere on the board. The hardware boxes
  * have nothing to open, bypass or delete, so mod-ui leaves them out.
  */
 static plugin_list_t g_plugin_list;
+/* the left display shows the list rather than the graph; kept across visits */
+static uint8_t g_list_view;
 /* where the box a list request was centred on sits in the whole list, or BM_NONE */
 static int16_t g_list_position = BM_NONE;
 
@@ -367,32 +370,9 @@ static void list_reload(int16_t focus_id)
 }
 
 /*
- * The list cursor follows the graph. A plugin among the rows held costs nothing; one outside
- * them fetches the window around it. A hardware box is not in the list, and the cursor stays.
- */
-static void list_follow_graph(void)
-{
-    const plugin_map_node_t *node = plugin_map_selected(&g_plugin_map);
-    uint8_t i;
-
-    if (!node || node->kind != BM_PLUGIN) return;
-
-    for (i = 0; i < g_plugin_list.count; i++)
-    {
-        if (g_plugin_list.rows[i].id == node->id)
-        {
-            g_plugin_list.hover = g_plugin_list.first + i;
-            list_follow();
-            return;
-        }
-    }
-
-    list_reload(node->id);
-}
-
-/*
- * The graph follows the list cursor. With <fetch> off only within the window of the graph
- * in hand, and the move is left to BM_tick() when the box is outside it.
+ * The graph's selection follows the list cursor: the right display shows the box the graph
+ * has selected, and the graph is what the list gives way to. With <fetch> off only within the
+ * window of the graph in hand, and the move is left to BM_tick() when the box is outside it.
  */
 static void list_sync(uint8_t fetch)
 {
@@ -433,13 +413,50 @@ static void list_move(int8_t step)
     list_sync(0);
 }
 
+/*
+ * Graph to list or back. The list opens on the box the graph has selected; the graph comes
+ * back on the box under the list cursor. A host that does not answer the list keeps the graph.
+ */
+static void toggle_view(void)
+{
+    if (!g_list_view)
+    {
+        const plugin_map_node_t *node = plugin_map_selected(&g_plugin_map);
+
+        list_reload(node ? node->id : BM_NONE);
+        g_list_view = g_plugin_list.loaded;
+    }
+    else
+    {
+        list_sync(1);
+        g_list_view = 0;
+    }
+}
+
 static void print_screen(void)
 {
+    const plugin_map_node_t *node;
+    const plugin_list_row_t *row;
+
     // a BM_drop() may have given the panel away while a request was waited on
     if (!g_active) return;
 
-    screen_plugin_map(&g_plugin_map, g_plugin_map_loaded);
-    screen_plugin_list(&g_plugin_list, g_plugin_map_loaded ? plugin_map_selected(&g_plugin_map) : NULL);
+    node = g_plugin_map_loaded ? plugin_map_selected(&g_plugin_map) : NULL;
+    row = g_list_view ? plugin_list_hovered(&g_plugin_list) : NULL;
+
+    screen_plugin_map(&g_plugin_map, g_plugin_map_loaded, g_list_view ? &g_plugin_list : NULL);
+
+    /*
+     * The right display is about the box under the cursor of the view on screen. In the list
+     * that is the row, which the graph may not have caught up with yet; the bypass flag is
+     * only in the graph, and is left out until it has.
+     */
+    if (row)
+        screen_plugin_details(row->title, row->kind, (node && node->id == row->id) ? node->bypassed : 0);
+    else if (node)
+        screen_plugin_details(node->title, node->kind, node->bypassed);
+    else
+        screen_plugin_details(NULL, 0, 0);
 }
 
 
@@ -477,10 +494,13 @@ void BM_enter(void)
     g_list_sync_pending = 0;
     request_plugin_map(BM_NONE, 1);
 
+    plugin_list_clear(&g_plugin_list);
+    if (g_list_view)
     {
         const plugin_map_node_t *node = plugin_map_selected(&g_plugin_map);
-        plugin_list_clear(&g_plugin_list);
+
         list_reload(node ? node->id : BM_NONE);
+        g_list_view = g_plugin_list.loaded;
     }
 
     // ... and only now, so the host takes note of the board we have just fetched
@@ -542,19 +562,16 @@ void BM_up(uint8_t encoder)
 
     if (g_active)
     {
-        // ENC1 walks the graph and the list follows, ENC2 walks the list and the graph follows
+        // ENC1 walks whichever view is on the left display
         if (encoder == 0)
         {
-            g_list_sync_pending = 0;
-            plugin_map_move(PLUGIN_MAP_PREV);
-            list_follow_graph();
-        }
-        else
-        {
-            list_move(-1);
-        }
+            if (g_list_view)
+                list_move(-1);
+            else
+                plugin_map_move(PLUGIN_MAP_PREV);
 
-        print_screen();
+            print_screen();
+        }
     }
 
     xSemaphoreGive(module_mutex);
@@ -566,19 +583,16 @@ void BM_down(uint8_t encoder)
 
     if (g_active)
     {
-        // ENC1 walks the graph and the list follows, ENC2 walks the list and the graph follows
+        // ENC1 walks whichever view is on the left display
         if (encoder == 0)
         {
-            g_list_sync_pending = 0;
-            plugin_map_move(PLUGIN_MAP_NEXT);
-            list_follow_graph();
-        }
-        else
-        {
-            list_move(1);
-        }
+            if (g_list_view)
+                list_move(1);
+            else
+                plugin_map_move(PLUGIN_MAP_NEXT);
 
-        print_screen();
+            print_screen();
+        }
     }
 
     xSemaphoreGive(module_mutex);
@@ -588,6 +602,21 @@ void BM_encoder_click(uint8_t encoder)
 {
     // opens the box under the cursor once there is a parameter page to open
     (void) encoder;
+}
+
+void BM_encoder_hold(uint8_t encoder)
+{
+    if (encoder != 0) return;
+
+    xSemaphoreTake(module_mutex, portMAX_DELAY);
+
+    if (g_active)
+    {
+        toggle_view();
+        print_screen();
+    }
+
+    xSemaphoreGive(module_mutex);
 }
 
 void BM_button_pressed(uint8_t button)
@@ -653,15 +682,14 @@ void BM_tick(void)
     if (g_active && g_plugin_map_stale)
     {
         const plugin_map_node_t *node = plugin_map_selected(&g_plugin_map);
+        const plugin_list_row_t *row = g_list_view ? plugin_list_hovered(&g_plugin_list) : NULL;
+        int16_t focus = row ? row->id : (node ? node->id : BM_NONE);
 
         g_plugin_map_stale = 0;
         g_list_sync_pending = 0;
 
-        request_plugin_map(node ? node->id : BM_NONE, 0);
-
-        // the graph's selection again, which may have fallen back on another box
-        node = plugin_map_selected(&g_plugin_map);
-        list_reload(node ? node->id : BM_NONE);
+        request_plugin_map(focus, 0);
+        if (g_list_view) list_reload(focus);
         print_screen();
     }
 
