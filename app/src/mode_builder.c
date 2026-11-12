@@ -59,6 +59,9 @@
 // how many options mod-ui sends of an enumeration at once, around the current one
 #define PARAM_OPTIONS_WINDOW 5
 
+// how long the control_adds of a page are waited for after the answer, in ms
+#define PARAMS_RECEIVE_TIMEOUT 2000
+
 
 /*
 ************************************************************************************************************************
@@ -103,8 +106,14 @@ static int16_t g_params_id = BM_NONE;
 static char g_params_uid[12];
 static char g_params_title[PLUGIN_MAP_TITLE_SIZE];
 
-/* the control_adds of the host are ours, while a page is being asked for */
+/*
+ * How many control_adds of the page asked for are still to come. They follow the answer
+ * rather than precede it: mod-ui writes the answer to a request straight away and queues its
+ * own commands until the request has been handled. So they are taken as ours until the page
+ * is full, or PARAMS_RECEIVE_TIMEOUT after the request should some never arrive.
+ */
 static volatile uint8_t g_receiving_controls;
+static portTickType g_receiving_stamp;
 
 /* the cursor moved onto another plugin; BM_tick() fetches its parameters */
 static uint8_t g_params_pending;
@@ -566,6 +575,8 @@ static void params_free_page(void)
 
 static void params_clear(void)
 {
+    // what is still on its way belongs to a page nobody is looking at
+    g_receiving_controls = 0;
     params_free_page();
     g_params.total = 0;
     g_params.first = 0;
@@ -610,10 +621,10 @@ static void request_controls(uint8_t start, uint8_t count)
     i += int_to_str(count, &buffer[i], sizeof(buffer) - i, 0);
     buffer[i++] = 0;
 
-    g_receiving_controls = 1;
+    g_receiving_stamp = xTaskGetTickCount();
+    g_receiving_controls = count;
     ui_comm_webgui_send(buffer, i);
     ui_comm_webgui_wait_response();
-    g_receiving_controls = 0;
 }
 
 // the page of parameters with the cursor on it
@@ -1144,12 +1155,25 @@ uint8_t BM_add_control(control_t *control)
 {
     if (!g_receiving_controls || !control || control->hw_id >= BM_PARAM_ROWS) return 0;
 
+    if ((xTaskGetTickCount() - g_receiving_stamp) >= (PARAMS_RECEIVE_TIMEOUT / portTICK_RATE_MS))
+    {
+        g_receiving_controls = 0;
+        return 0;
+    }
+
+    g_receiving_controls--;
+
     // the control_add counts the options of an enumeration one less than there are
     control_prepare(control, control->steps + 1);
 
-    // not under the mutex: its holder is the one waiting for these, in request_controls()
+    // Not under the mutex, which the actuators task may hold waiting on an answer that only
+    // comes after this callback returns. The page is only freed under the mutex before a new
+    // request, and these arrive after it.
     if (g_params.controls[control->hw_id]) data_free_control(g_params.controls[control->hw_id]);
     g_params.controls[control->hw_id] = control;
+
+    // drawn by BM_tick(), from the displays task
+    g_params_dirty = 1;
 
     return 1;
 }
