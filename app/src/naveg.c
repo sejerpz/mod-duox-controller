@@ -20,6 +20,7 @@
 #include "mod-protocol.h"
 #include "images.h"
 #include "mode_builder.h"
+#include "widget_area.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -3206,6 +3207,9 @@ void naveg_foot_change(uint8_t foot, uint8_t pressed)
                     naveg_remove_control(q);
                 }
 
+                //the plugin widgets of the new page
+                naveg_print_control_screens(WA_set_screen(page, 0));
+
                 naveg_turn_on_pagination_leds();
 
                 //clear actuator queue
@@ -3273,6 +3277,9 @@ void naveg_foot_change(uint8_t foot, uint8_t pressed)
                 {
                     naveg_remove_control(q);
                 }
+
+                //the plugin widgets of the new page
+                naveg_print_control_screens(WA_set_screen(page, 0));
 
                 naveg_turn_on_pagination_leds();
 
@@ -3347,6 +3354,7 @@ void naveg_reset_page(void)
 {
     //reset variable
     page = 0;
+    naveg_print_control_screens(WA_set_screen(page, 0));
 
     page_available[0] = 1;
     page_available[1] = 0;
@@ -3593,6 +3601,30 @@ void naveg_pages_available(uint8_t page_1, uint8_t page_2, uint8_t page_3, uint8
     page_available[5] = page_6;
 
     naveg_turn_on_pagination_leds();
+}
+
+void naveg_print_control_screens(uint8_t displays)
+{
+    uint8_t display;
+
+    if (!g_initialized || BM_is_active()) return;
+
+    for (display = 0; display < SLOTS_COUNT; display++)
+    {
+        if (!(displays & (1 << display)) || display_has_tool_enabled(display)) continue;
+
+        screen_clear(display);
+        screen_encoder(display, g_encoders[display]);
+
+        //the pedalboard name on the left, the master volume on the right
+        if (display == 0)
+            naveg_print_pb_name(display);
+        else
+            naveg_master_volume(0);
+
+        draw_all_pots(display);
+        draw_all_foots(display);
+    }
 }
 
 void naveg_print_pb_name(uint8_t display)

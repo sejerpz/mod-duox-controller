@@ -20,6 +20,7 @@
 #include "calibration.h"
 #include "mod-protocol.h"
 #include "mode_builder.h"
+#include "widget_area.h"
 
 /*
 ************************************************************************************************************************
@@ -302,6 +303,8 @@ void protocol_init(void)
     protocol_add_command(CMD_GLCD_TEXT, cb_glcd_text);
     protocol_add_command(CMD_GLCD_DIALOG, cb_glcd_dialog);
     protocol_add_command(CMD_GLCD_DRAW, cb_glcd_draw);
+    protocol_add_command(CMD_WIDGET_AREA_ADD, cb_widget_area_add);
+    protocol_add_command(CMD_WIDGET_AREA_REMOVE, cb_widget_area_remove);
     protocol_add_command(CMD_DISP_BRIGHTNESS, cb_disp_brightness);
     protocol_add_command(CMD_GUI_CONNECTED, cb_gui_connection);
     protocol_add_command(CMD_GUI_DISCONNECTED, cb_gui_connection);
@@ -335,6 +338,8 @@ void protocol_init(void)
     protocol_add_command(CMD_SYS_CHANGE_UNIT, cb_change_assigment_unit);
     protocol_add_command(CMD_SYS_CHANGE_VALUE, cb_change_assigment_value);
     protocol_add_command(CMD_SYS_CHANGE_WIDGET_INDICATOR, cb_change_widget_indicator);
+    protocol_add_command(CMD_SYS_WIDGET_BITMAP, cb_widget_bitmap);
+    protocol_add_command(CMD_SYS_WIDGET_CLEAR, cb_widget_clear);
     protocol_add_command(CMD_PEDALBOARD_CHANGE, cb_pedalboard_change);
 }
 
@@ -425,6 +430,60 @@ void cb_glcd_draw(uint8_t serial_id, proto_t *proto)
 
     str_to_hex(proto->list[4], msg_buffer, sizeof(msg_buffer));
     glcd_draw_image(hardware_glcds(glcd_id), x, y, msg_buffer, GLCD_BLACK);
+}
+
+// mod-ui places the areas on both displays side by side, x 0 to 255
+void cb_widget_area_add(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    const glcd_rect_t rect = {
+        atoi(proto->list[4]), atoi(proto->list[5]), atoi(proto->list[6]), atoi(proto->list[7])
+    };
+    uint8_t displays;
+
+    if (!WA_add(atoi(proto->list[3]), atoi(proto->list[1]), atoi(proto->list[2]), &rect, &displays))
+    {
+        protocol_send_response(CMD_RESPONSE, INVALID_ARGUMENT, proto);
+        return;
+    }
+
+    naveg_print_control_screens(displays);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+void cb_widget_area_remove(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    naveg_print_control_screens(WA_remove(atoi(proto->list[1])));
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+// bitmaps for an area that is not in view are dropped without complaint: the plugin may still be drawing
+// the page the user just left, and it redraws everything when the area is in view again
+void cb_widget_bitmap(uint8_t serial_id, proto_t *proto)
+{
+    if (serial_id != SYSTEM_SERIAL)
+        return;
+
+    WA_draw(atoi(proto->list[2]), atoi(proto->list[3]), atoi(proto->list[4]),
+            atoi(proto->list[5]), atoi(proto->list[6]), proto->list[7]);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+void cb_widget_clear(uint8_t serial_id, proto_t *proto)
+{
+    if (serial_id != SYSTEM_SERIAL)
+        return;
+
+    WA_draw(atoi(proto->list[2]), atoi(proto->list[3]), atoi(proto->list[4]),
+            atoi(proto->list[5]), atoi(proto->list[6]), NULL);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
 }
 
 void cb_gui_connection(uint8_t serial_id, proto_t *proto)

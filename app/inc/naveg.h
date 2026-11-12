@@ -160,6 +160,9 @@ void naveg_bypass_refresh(uint8_t bypass_1, uint8_t bypass_2, uint8_t quick_bypa
 
 void naveg_set_acceleration(uint8_t display_id);
 
+// prints the control screen again on the displays given, one bit each (bit 0 the left one), when no tool
+// holds them: what the plugin widgets need when one comes or goes
+void naveg_print_control_screens(uint8_t displays);
 void naveg_print_pb_name(uint8_t display);
 
 void naveg_lock_pots(uint8_t lock);
