@@ -6,6 +6,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <float.h>
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -44,6 +46,19 @@
 // the list crawl.
 #define PLUGIN_LIST_SYNC_DELAY 250
 
+// The parameters of the box under the cursor are fetched once the cursor has been still this
+// long, in ms: a page is a command and up to BM_PARAM_ROWS control_adds, too much for every
+// step of the encoder.
+#define PARAMS_LOAD_DELAY 250
+
+// Steps of a continuous parameter. mod-ui takes the count from the hardware descriptor for
+// /hmi/knob<hw_id + 1>, and the Duo X has two of them: the rows below the second would turn
+// in a handful of steps. 201 is what the descriptor gives the two that exist.
+#define PARAM_VALUE_STEPS 201
+
+// how many options mod-ui sends of an enumeration at once, around the current one
+#define PARAM_OPTIONS_WINDOW 5
+
 
 /*
 ************************************************************************************************************************
@@ -77,6 +92,26 @@ static int16_t g_list_position = BM_NONE;
 /* the list cursor moved to a box outside the graph's window; BM_tick() fetches it */
 static uint8_t g_list_sync_pending;
 static portTickType g_list_sync_stamp;
+
+/*
+ * The parameters on the right display, of the plugin with the wire id g_params_id: a page of
+ * them at a time, as controls the host sends with control_add. g_params_id is BM_NONE when
+ * there are none in hand, and then the right display shows the box itself.
+ */
+static plugin_params_t g_params;
+static int16_t g_params_id = BM_NONE;
+static char g_params_uid[12];
+static char g_params_title[PLUGIN_MAP_TITLE_SIZE];
+
+/* the control_adds of the host are ours, while a page is being asked for */
+static volatile uint8_t g_receiving_controls;
+
+/* the cursor moved onto another plugin; BM_tick() fetches its parameters */
+static uint8_t g_params_pending;
+static portTickType g_params_stamp;
+
+/* the host changed a value on the page; BM_tick() redraws it */
+static volatile uint8_t g_params_dirty;
 
 static volatile uint8_t g_active;
 
@@ -414,6 +449,452 @@ static void list_move(int8_t step)
 }
 
 /*
+ * Parameters of the plugin under the cursor
+ */
+
+// First option mod-ui sends of an enumeration whose current one is <index> of <count>.
+// Mirrors the window of hmi.py control_add() and host.py _hmi_send_next_control_page_real().
+static int16_t options_window_start(int16_t index, int16_t count)
+{
+    if (count <= PARAM_OPTIONS_WINDOW || index <= 2) return 0;
+    if (index + 2 >= count) return count - PARAM_OPTIONS_WINDOW;
+    return index - 2;
+}
+
+static uint8_t is_enumeration(const control_t *control)
+{
+    return (control->properties & (FLAG_CONTROL_ENUMERATION | FLAG_CONTROL_SCALE_POINTS | FLAG_CONTROL_REVERSE)) != 0;
+}
+
+/*
+ * The step of a control from its value, as the encoders of control mode reckon it. For an
+ * enumeration, <options> is how many it has in all -- the two messages that carry one count
+ * them differently -- and the step is the place of the current one among those held, while
+ * `steps` becomes the last index of the whole list.
+ */
+static void control_prepare(control_t *control, int16_t options)
+{
+    if (is_enumeration(control))
+    {
+        int16_t step = control->scale_point_index -
+                       options_window_start(control->scale_point_index, options);
+
+        if (step < 0) step = 0;
+        if (control->scale_points_count && step >= control->scale_points_count)
+            step = control->scale_points_count - 1;
+
+        control->step = step;
+        control->steps = (options > 0) ? options - 1 : 0;
+    }
+    else if (control->properties & (FLAG_CONTROL_BYPASS | FLAG_CONTROL_TOGGLED | FLAG_CONTROL_TRIGGER))
+    {
+        control->steps = 1;
+        control->step = (control->value != 0);
+    }
+    else if (control->properties & FLAG_CONTROL_INTEGER)
+    {
+        control->steps = (control->maximum - control->minimum) + 1;
+        control->step = control->value - control->minimum;
+    }
+    else
+    {
+        control->steps = PARAM_VALUE_STEPS;
+
+        if (control->properties & FLAG_CONTROL_LOGARITHMIC)
+        {
+            if (control->minimum == 0) control->minimum = FLT_MIN;
+            if (control->maximum == 0) control->maximum = FLT_MIN;
+            if (control->value == 0) control->value = FLT_MIN;
+
+            control->step = (control->steps - 1) * log(control->value / control->minimum) /
+                            log(control->maximum / control->minimum);
+        }
+        else
+        {
+            control->step = (control->steps - 1) * (control->value - control->minimum) /
+                            (control->maximum - control->minimum);
+        }
+    }
+
+    if (control->step < 0) control->step = 0;
+    if (control->step > control->steps) control->step = control->steps;
+}
+
+// the value of a control from its step; the same calculation as control mode
+static void step_to_value(control_t *control)
+{
+    float p_step;
+
+    if (is_enumeration(control))
+    {
+        if (control->scale_points_count)
+            control->value = control->scale_points[control->step]->value;
+        return;
+    }
+
+    if (control->properties & (FLAG_CONTROL_BYPASS | FLAG_CONTROL_TOGGLED | FLAG_CONTROL_TRIGGER))
+        return;
+
+    if (control->properties & FLAG_CONTROL_INTEGER)
+    {
+        control->value = control->minimum + control->step;
+    }
+    else
+    {
+        p_step = ((float) control->step) / ((float) (control->steps - 1));
+
+        if (control->properties & FLAG_CONTROL_LOGARITHMIC)
+            control->value = control->minimum * pow(control->maximum / control->minimum, p_step);
+        else
+            control->value = (p_step * (control->maximum - control->minimum)) + control->minimum;
+    }
+
+    if (control->value > control->maximum) control->value = control->maximum;
+    if (control->value < control->minimum) control->value = control->minimum;
+}
+
+static void params_free_page(void)
+{
+    uint8_t i;
+
+    for (i = 0; i < BM_PARAM_ROWS; i++)
+    {
+        if (g_params.controls[i]) data_free_control(g_params.controls[i]);
+        g_params.controls[i] = NULL;
+    }
+}
+
+static void params_clear(void)
+{
+    params_free_page();
+    g_params.total = 0;
+    g_params.first = 0;
+    g_params.hover = 0;
+    g_params.editing = 0;
+    g_params_id = BM_NONE;
+    g_params_pending = 0;
+}
+
+static void parse_controls_count(void *data, menu_item_t *item)
+{
+    (void) item;
+    char **list = data;
+
+    g_params.total = 0;
+
+    if (!list || !list[0] || !list[1] || atoi(list[1]) == -1 || !list[2]) return;
+
+    g_params.total = (uint8_t) atoi(list[2]);
+}
+
+/*
+ * Asks for the parameters <start> .. <start + count - 1> of the plugin in g_params_uid. The
+ * host sends them as control_adds and then answers with how many parameters there are in
+ * all, so a count of zero just asks for that.
+ */
+static void request_controls(uint8_t start, uint8_t count)
+{
+    uint8_t i;
+    char buffer[40];
+    memset(buffer, 0, sizeof buffer);
+
+    ui_comm_webgui_set_response_cb(parse_controls_count, NULL);
+    ui_comm_webgui_clear_tx_buffer();
+
+    i = copy_command((char *)buffer, CMD_BUILDER_CONTROL_LIST);
+    strcpy(&buffer[i], g_params_uid);
+    i += strlen(g_params_uid);
+    buffer[i++] = ' ';
+    i += int_to_str(start, &buffer[i], sizeof(buffer) - i, 0);
+    buffer[i++] = ' ';
+    i += int_to_str(count, &buffer[i], sizeof(buffer) - i, 0);
+    buffer[i++] = 0;
+
+    g_receiving_controls = 1;
+    ui_comm_webgui_send(buffer, i);
+    ui_comm_webgui_wait_response();
+    g_receiving_controls = 0;
+}
+
+// the page of parameters with the cursor on it
+static void params_fetch_page(void)
+{
+    uint8_t first = (g_params.hover / BM_PARAM_ROWS) * BM_PARAM_ROWS;
+    uint8_t total = g_params.total;
+    uint8_t count = (total - first) > BM_PARAM_ROWS ? BM_PARAM_ROWS : (total - first);
+
+    params_free_page();
+    g_params.first = first;
+
+    if (count > 0) request_controls(first, count);
+
+    // the answer counts them again, and the board may have changed meanwhile
+    if (g_params.total == 0) g_params.total = total;
+}
+
+static void params_load(int16_t id, const char *title)
+{
+    params_clear();
+
+    g_params_id = id;
+    int_to_str(id, g_params_uid, sizeof(g_params_uid), 0);
+    strncpy(g_params_title, title, sizeof(g_params_title) - 1);
+    g_params_title[sizeof(g_params_title) - 1] = 0;
+    g_params.title = g_params_title;
+
+    request_controls(0, 0);
+
+    if (g_params.total == 0)
+    {
+        // nothing to show, or the host does not know the plugin: the box itself instead
+        g_params_id = BM_NONE;
+        return;
+    }
+
+    params_fetch_page();
+}
+
+/*
+ * The box under the cursor of the view on the left display: the list row, which the graph
+ * may not have caught up with yet, or the graph's selection.
+ */
+static uint8_t cursor_box(int16_t *id, const char **title, uint8_t *kind)
+{
+    const plugin_list_row_t *row = g_list_view ? plugin_list_hovered(&g_plugin_list) : NULL;
+    const plugin_map_node_t *node = g_plugin_map_loaded ? plugin_map_selected(&g_plugin_map) : NULL;
+
+    if (row)
+    {
+        *id = row->id;
+        *title = row->title;
+        *kind = row->kind;
+        return 1;
+    }
+
+    if (node)
+    {
+        *id = node->id;
+        *title = node->title;
+        *kind = node->kind;
+        return 1;
+    }
+
+    return 0;
+}
+
+/*
+ * The parameters follow the cursor of the left display: now, or with <now> off once it has
+ * been still for PARAMS_LOAD_DELAY.
+ */
+static void params_follow(uint8_t now)
+{
+    int16_t id;
+    const char *title;
+    uint8_t kind;
+
+    if (!cursor_box(&id, &title, &kind) || kind != BM_PLUGIN)
+    {
+        params_clear();
+        return;
+    }
+
+    if (id == g_params_id && !g_params_pending) return;
+
+    if (now)
+    {
+        params_load(id, title);
+        return;
+    }
+
+    // the old page goes at once: it is not the box on screen any more
+    params_clear();
+    g_params_pending = 1;
+    g_params_stamp = xTaskGetTickCount();
+}
+
+static void send_control_set(control_t *control)
+{
+    char buffer[40];
+    uint8_t i;
+
+    i = copy_command(buffer, CMD_BUILDER_CONTROL_SET);
+    i += int_to_str(control->hw_id, &buffer[i], sizeof(buffer) - i, 0);
+    buffer[i++] = ' ';
+    i += float_to_str(control->value, &buffer[i], sizeof(buffer) - i, 3);
+    buffer[i++] = 0;
+
+    ui_comm_webgui_set_response_cb(NULL, NULL);
+    ui_comm_webgui_clear_tx_buffer();
+    ui_comm_webgui_send(buffer, i);
+    ui_comm_webgui_wait_response();
+
+    // the graph draws a bypassed plugin dashed; keep it in step without fetching it again
+    if (control->properties & FLAG_CONTROL_BYPASS)
+    {
+        int8_t index = plugin_map_index_of(&g_plugin_map, g_params_id);
+        if (index != BM_NONE) plugin_map_set_bypassed(&g_plugin_map, index, control->value != 0);
+    }
+}
+
+static void parse_control_page(void *data, menu_item_t *item)
+{
+    (void) item;
+    char **list = data;
+    control_t *control;
+
+    if (!list || !list[0] || !list[1] || atoi(list[1]) == -1) return;
+
+    // "r 1 <hw_id> <label> ...": a control_add with "1" where the command name would be
+    control = data_parse_control(&list[1]);
+    if (!control) return;
+
+    if (control->hw_id >= BM_PARAM_ROWS || !is_enumeration(control))
+    {
+        data_free_control(control);
+        return;
+    }
+
+    // this message counts the options in `steps`, the control_add one less
+    control_prepare(control, control->steps);
+
+    if (g_params.controls[control->hw_id]) data_free_control(g_params.controls[control->hw_id]);
+    g_params.controls[control->hw_id] = control;
+}
+
+/*
+ * The options of an enumeration around <index>, which the host sends as the control again.
+ */
+static void request_control_page(control_t *control, int16_t index, uint8_t up)
+{
+    char buffer[32];
+    uint8_t i;
+
+    ui_comm_webgui_set_response_cb(parse_control_page, NULL);
+    ui_comm_webgui_clear_tx_buffer();
+
+    i = copy_command(buffer, CMD_BUILDER_CONTROL_PAGE);
+    i += int_to_str(control->hw_id, &buffer[i], sizeof(buffer) - i, 0);
+    buffer[i++] = ' ';
+    i += int_to_str(up ? FLAG_PAGINATION_PAGE_UP : 0, &buffer[i], sizeof(buffer) - i, 0);
+    buffer[i++] = ' ';
+    i += int_to_str(index, &buffer[i], sizeof(buffer) - i, 0);
+    buffer[i++] = 0;
+
+    ui_comm_webgui_send(buffer, i);
+    ui_comm_webgui_wait_response();
+}
+
+// the control under the cursor of the parameters, or NULL
+static control_t *params_hovered(void)
+{
+    if (g_params_id == BM_NONE) return NULL;
+    if (g_params.hover < g_params.first || g_params.hover >= g_params.first + BM_PARAM_ROWS) return NULL;
+
+    return g_params.controls[g_params.hover - g_params.first];
+}
+
+/*
+ * One step of the value under the cursor, either way. Ends of the range stop, they do not
+ * wrap. An enumeration steps through its options, asking for the next ones when the step
+ * leaves those held.
+ */
+static void params_turn(control_t *control, int8_t dir)
+{
+    uint8_t hw_id = control->hw_id;
+
+    if (is_enumeration(control))
+    {
+        int16_t index = control->scale_point_index + dir;
+        int16_t start = control->scale_point_index - control->step;
+
+        if (index < 0 || index > control->steps) return;
+
+        if (index >= start && index < start + control->scale_points_count)
+        {
+            control->step += dir;
+            control->scale_point_index = index;
+        }
+        else
+        {
+            request_control_page(control, index, dir > 0);
+
+            // the control was replaced, around the option asked for
+            control = g_params.controls[hw_id];
+            if (!control || control->scale_point_index != index) return;
+        }
+    }
+    else if (control->properties & (FLAG_CONTROL_BYPASS | FLAG_CONTROL_TOGGLED))
+    {
+        float value = (dir > 0) ? 1 : 0;
+
+        // a bypass is on when the plugin is off: right is on, for the plugin
+        if (control->properties & FLAG_CONTROL_BYPASS) value = 1 - value;
+        if (control->value == value) return;
+        control->value = value;
+    }
+    else if (control->properties & FLAG_CONTROL_TRIGGER)
+    {
+        return;
+    }
+    else
+    {
+        int16_t step = control->step + dir;
+
+        if (step < 0 || step > control->steps - 1) return;
+        control->step = step;
+    }
+
+    step_to_value(control);
+    send_control_set(control);
+}
+
+// ENC2 click: flips a switch or fires a trigger, and starts or ends the edit of anything else
+static void params_click(void)
+{
+    control_t *control = params_hovered();
+
+    if (!control) return;
+
+    if (control->properties & (FLAG_CONTROL_BYPASS | FLAG_CONTROL_TOGGLED))
+    {
+        control->value = (control->value != 0) ? 0 : 1;
+        send_control_set(control);
+    }
+    else if (control->properties & FLAG_CONTROL_TRIGGER)
+    {
+        control->value = control->maximum;
+        send_control_set(control);
+    }
+    else
+    {
+        g_params.editing = !g_params.editing;
+    }
+}
+
+// ENC2 turn: the value while editing, the cursor otherwise
+static void params_move(int8_t dir)
+{
+    int16_t hover;
+
+    if (g_params_id == BM_NONE) return;
+
+    if (g_params.editing)
+    {
+        control_t *control = params_hovered();
+        if (control) params_turn(control, dir);
+        return;
+    }
+
+    hover = g_params.hover + dir;
+    if (hover < 0 || hover >= g_params.total) return;
+
+    g_params.hover = hover;
+
+    if (hover < g_params.first || hover >= g_params.first + BM_PARAM_ROWS)
+        params_fetch_page();
+}
+
+/*
  * Graph to list or back. The list opens on the box the graph has selected; the graph comes
  * back on the box under the list cursor. A host that does not answer the list keeps the graph.
  */
@@ -431,6 +912,8 @@ static void toggle_view(void)
         list_sync(1);
         g_list_view = 0;
     }
+
+    params_follow(1);
 }
 
 static void print_screen(void)
@@ -445,6 +928,12 @@ static void print_screen(void)
     row = g_list_view ? plugin_list_hovered(&g_plugin_list) : NULL;
 
     screen_plugin_map(&g_plugin_map, g_plugin_map_loaded, g_list_view ? &g_plugin_list : NULL);
+
+    if (g_params_id != BM_NONE)
+    {
+        screen_plugin_params(&g_params);
+        return;
+    }
 
     /*
      * The right display is about the box under the cursor of the view on screen. In the list
@@ -492,6 +981,8 @@ void BM_enter(void)
     g_unwatch = 0;
     g_plugin_map_stale = 0;
     g_list_sync_pending = 0;
+    g_params_dirty = 0;
+    params_clear();
     request_plugin_map(BM_NONE, 1);
 
     plugin_list_clear(&g_plugin_list);
@@ -502,6 +993,8 @@ void BM_enter(void)
         list_reload(node ? node->id : BM_NONE);
         g_list_view = g_plugin_list.loaded;
     }
+
+    params_follow(1);
 
     // ... and only now, so the host takes note of the board we have just fetched
     request_change_notify(1);
@@ -532,6 +1025,7 @@ void BM_exit(void)
 
     g_active = 0;
     g_plugin_map_stale = 0;
+    params_clear();
 
     // nothing should be running on the server for a screen nobody is on
     if (g_watching)
@@ -562,7 +1056,7 @@ void BM_up(uint8_t encoder)
 
     if (g_active)
     {
-        // ENC1 walks whichever view is on the left display
+        // ENC1 walks whichever view is on the left display, ENC2 the parameters
         if (encoder == 0)
         {
             if (g_list_view)
@@ -570,8 +1064,14 @@ void BM_up(uint8_t encoder)
             else
                 plugin_map_move(PLUGIN_MAP_PREV);
 
-            print_screen();
+            params_follow(0);
         }
+        else
+        {
+            params_move(-1);
+        }
+
+        print_screen();
     }
 
     xSemaphoreGive(module_mutex);
@@ -583,7 +1083,7 @@ void BM_down(uint8_t encoder)
 
     if (g_active)
     {
-        // ENC1 walks whichever view is on the left display
+        // ENC1 walks whichever view is on the left display, ENC2 the parameters
         if (encoder == 0)
         {
             if (g_list_view)
@@ -591,8 +1091,14 @@ void BM_down(uint8_t encoder)
             else
                 plugin_map_move(PLUGIN_MAP_NEXT);
 
-            print_screen();
+            params_follow(0);
         }
+        else
+        {
+            params_move(1);
+        }
+
+        print_screen();
     }
 
     xSemaphoreGive(module_mutex);
@@ -600,8 +1106,17 @@ void BM_down(uint8_t encoder)
 
 void BM_encoder_click(uint8_t encoder)
 {
-    // opens the box under the cursor once there is a parameter page to open
-    (void) encoder;
+    if (encoder != 1) return;
+
+    xSemaphoreTake(module_mutex, portMAX_DELAY);
+
+    if (g_active)
+    {
+        params_click();
+        print_screen();
+    }
+
+    xSemaphoreGive(module_mutex);
 }
 
 void BM_encoder_hold(uint8_t encoder)
@@ -623,6 +1138,53 @@ void BM_button_pressed(uint8_t button)
 {
     if (button == BM_BUTTON_BACK)
         BM_exit();
+}
+
+uint8_t BM_add_control(control_t *control)
+{
+    if (!g_receiving_controls || !control || control->hw_id >= BM_PARAM_ROWS) return 0;
+
+    // the control_add counts the options of an enumeration one less than there are
+    control_prepare(control, control->steps + 1);
+
+    // not under the mutex: its holder is the one waiting for these, in request_controls()
+    if (g_params.controls[control->hw_id]) data_free_control(g_params.controls[control->hw_id]);
+    g_params.controls[control->hw_id] = control;
+
+    return 1;
+}
+
+void BM_set_control(uint8_t hw_id, float value)
+{
+    control_t *control;
+    uint8_t i;
+
+    if (!g_active || hw_id >= BM_PARAM_ROWS) return;
+
+    control = g_params.controls[hw_id];
+    if (!control) return;
+
+    control->value = value;
+
+    if (is_enumeration(control))
+    {
+        // an option among those held; another one shows when the page is fetched again
+        for (i = 0; i < control->scale_points_count; i++)
+        {
+            if (control->scale_points[i]->value == value)
+            {
+                control->scale_point_index += i - control->step;
+                control->step = i;
+                break;
+            }
+        }
+    }
+    else
+    {
+        control_prepare(control, 0);
+    }
+
+    g_params_dirty = 1;
 }
 
 void BM_plugin_map_stale(void)
@@ -670,6 +1232,19 @@ void BM_tick(void)
         xSemaphoreGive(module_mutex);
     }
 
+    if (g_active && (g_params_dirty || (g_params_pending &&
+        (xTaskGetTickCount() - g_params_stamp) >= (PARAMS_LOAD_DELAY / portTICK_RATE_MS))))
+    {
+        xSemaphoreTake(module_mutex, portMAX_DELAY);
+
+        if (g_active && g_params_pending) params_follow(1);
+
+        g_params_dirty = 0;
+        print_screen();
+
+        xSemaphoreGive(module_mutex);
+    }
+
     if (!g_active || !g_plugin_map_stale) return;
 
     xSemaphoreTake(module_mutex, portMAX_DELAY);
@@ -690,6 +1265,22 @@ void BM_tick(void)
 
         request_plugin_map(focus, 0);
         if (g_list_view) list_reload(focus);
+
+        // the parameters too, which may have changed with the board; the cursor stays put
+        {
+            uint8_t hover = g_params.hover, editing = g_params.editing;
+
+            g_params_id = BM_NONE;
+            params_follow(1);
+
+            if (g_params_id != BM_NONE && hover < g_params.total)
+            {
+                g_params.hover = hover;
+                g_params.editing = editing;
+                if (hover >= BM_PARAM_ROWS) params_fetch_page();
+            }
+        }
+
         print_screen();
     }
 

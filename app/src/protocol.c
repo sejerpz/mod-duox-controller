@@ -319,6 +319,7 @@ void protocol_init(void)
     protocol_add_command(CMD_PEDALBOARD_LOADING_BEGIN, cb_pedalboard_load_begin);
     protocol_add_command(CMD_PEDALBOARD_LOADING_END, cb_pedalboard_load_end);
     protocol_add_command(CMD_BUILDER_PLUGIN_UPDATED, cb_plugin_map_updated);
+    protocol_add_command(CMD_BUILDER_CONTROL_SET, cb_builder_control_set);
     protocol_add_command(CMD_PEDALBOARD_NAME_SET, cb_pedalboard_name);
     protocol_add_command(CMD_DUOX_PAGES_AVAILABLE, cb_pages_available);
     protocol_add_command(CMD_SELFTEST_SAVE_POT_CALIBRATION, cb_save_pot_cal_val);
@@ -455,7 +456,10 @@ void cb_control_add(uint8_t serial_id, proto_t *proto)
     UNUSED_PARAM(serial_id);
 
     control_t *control = data_parse_control(proto->list);
-    naveg_add_control(control, 1);
+
+    // a page of parameters the builder asked for comes with the hw_ids of the real actuators
+    if (!BM_add_control(control))
+        naveg_add_control(control, 1);
 
     protocol_send_response(CMD_RESPONSE, 0, proto);
 }
@@ -645,6 +649,16 @@ void cb_plugin_map_updated(uint8_t serial_id, proto_t *proto)
     protocol_send_response(CMD_RESPONSE, 0, proto);
 
     BM_plugin_map_stale();
+}
+
+// a value of the builder's parameter page changed on the host, by a preset load most of the time
+void cb_builder_control_set(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    BM_set_control(atoi(proto->list[1]), atof(proto->list[2]));
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
 }
 
 void cb_pedalboard_name(uint8_t serial_id, proto_t *proto)

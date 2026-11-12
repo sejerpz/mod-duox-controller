@@ -19,6 +19,7 @@
 #include "config.h"
 #include "data.h"
 #include "plugin_map.h"
+#include "mode_builder.h"
 
 
 /*
@@ -82,6 +83,7 @@ void screen_widget_overlay(uint8_t display, int8_t style, char *header, char *te
 // given, and the box under the cursor on the right; a NULL <name> is no box at all
 void screen_plugin_map(const plugin_map_t *map, uint8_t loaded, const plugin_list_t *list);
 void screen_plugin_details(const char *name, uint8_t kind, uint8_t bypassed);
+void screen_plugin_params(const plugin_params_t *params);
 
 /*
 ************************************************************************************************************************

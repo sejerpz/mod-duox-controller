@@ -90,6 +90,47 @@ static char g_pedalboard_name[32] = "default";
 ************************************************************************************************************************
 */
 
+// A control value in at most 5 characters, as the encoder screen shows it: 10999 becomes 11K, and
+// the smaller the value the more decimals. <text> holds at least 6 bytes.
+static void value_to_text(float value, char *text)
+{
+    //value_str is our temporary value which we use for what kind of value representation we need
+    char value_str[10] = {0};
+
+    //if the value becomes bigger then 9999 (4 characters), then switch to another view 10999 becomes 10.9K
+    if (value > 9999) {
+        int_to_str(value/1000, value_str, sizeof(value_str) - 1, 0);
+        strcat(value_str, "K");
+    }
+    //else if we have a value bigger then 100, we dont display decimals anymore
+    else if (value > 99.9) {
+        int_to_str(value, value_str, sizeof(value_str), 0);
+    }
+    //else if we have a value bigger then 10 we display just one decimal
+    else if (value > 9.9) {
+        float_to_str(value, value_str, sizeof(value_str), 1);
+    }
+    //if the value becomes less then 0 we change to 1 or 0 decimals
+    else if (value < 0) {
+        if (value > -99.9) {
+            float_to_str(value, value_str, sizeof(value_str), 1);
+        }
+        else if (value < -9999.9) {
+            int_to_str((value/1000), value_str, sizeof(value_str) - 1, 0);
+            strcat(value_str, "K");
+        }
+        else int_to_str(value, value_str, sizeof(value_str), 0);
+    }
+    //for values between 0 and 10 display 2 decimals
+    else {
+        float_to_str(value, value_str, sizeof(value_str), 2);
+    }
+
+    //copy the first 5 char (value_str is zero filled), and terminate the text with line ending
+    memcpy(text, value_str, 5);
+    text[5] = '\0';
+}
+
 /*
 ************************************************************************************************************************
 *           GLOBAL FUNCTIONS
@@ -622,41 +663,7 @@ void screen_encoder(uint8_t display_id, control_t *control)
             //convert value
             //value_str is our temporary value which we use for what kind of value representation we need
             //value_str_bfr is the value that gets printed
-            char value_str[10] = {0};
-
-            //if the value becomes bigger then 9999 (4 characters), then switch to another view 10999 becomes 10.9K
-            if (control->value > 9999) {
-                int_to_str(control->value/1000, value_str, sizeof(value_str) - 1, 0);
-                strcat(value_str, "K");
-            }
-            //else if we have a value bigger then 100, we dont display decimals anymore
-            else if (control->value > 99.9) {
-                int_to_str(control->value, value_str, sizeof(value_str), 0);
-            }
-            //else if we have a value bigger then 10 we display just one decimal
-            else if (control->value > 9.9) {
-                float_to_str((control->value), value_str, sizeof(value_str), 1);
-            }
-            //if the value becomes less then 0 we change to 1 or 0 decimals
-            else if (control->value < 0) {
-                if (control->value > -99.9) {
-                    float_to_str(control->value, value_str, sizeof(value_str), 1);
-                }
-                else if (control->value < -9999.9) {
-                    int_to_str((control->value/1000), value_str, sizeof(value_str) - 1, 0);
-                    strcat(value_str, "K");
-                }
-                else int_to_str(control->value, value_str, sizeof(value_str), 0);
-            }
-            //for values between 0 and 10 display 2 decimals
-            else {
-                float_to_str(control->value, value_str, sizeof(value_str), 2);
-            }
-
-            //copy to value_str_bfr, the first 5 char
-            strncpy(value_str_bfr, value_str, 5);
-            //terminate the text with line ending
-            value_str_bfr[5] ='\0';
+            value_to_text(control->value, value_str_bfr);
 
             //convert unit
             const char *unit_str;
@@ -1632,5 +1639,114 @@ void screen_plugin_details(const char *name, uint8_t kind_id, uint8_t bypassed)
     {
         static const char bypassed[] = "BYPASSED";
         glcd_text(display, centred_x(Terminal3x5, bypassed), 46, bypassed, Terminal3x5, GLCD_BLACK);
+    }
+}
+
+/*
+ * BUILDER: the parameters of the plugin under the cursor
+ *
+ * One row each, the name on the left and the value on the right, a page at a time with a bar
+ * on the right edge when there is more than one. The cursor row is inverted; while it is being
+ * edited only its value is, the part the encoder is turning.
+ */
+#define PARAMS_ROW_Y        9
+#define PARAMS_ROW_PITCH    7
+
+static void param_value_text(const control_t *control, char *text, uint8_t size)
+{
+    if (control->properties & (FLAG_CONTROL_ENUMERATION | FLAG_CONTROL_SCALE_POINTS | FLAG_CONTROL_REVERSE))
+    {
+        const char *label = (control->scale_points_count && control->step < control->scale_points_count)
+                            ? control->scale_points[control->step]->label : "";
+        strncpy(text, label, size - 1);
+        text[size - 1] = 0;
+    }
+    else if (control->properties & FLAG_CONTROL_BYPASS)
+    {
+        // the bypass row is named for the plugin being on, which is the bypass off
+        strcpy(text, (control->value != 0) ? "OFF" : "ON");
+    }
+    else if (control->properties & FLAG_CONTROL_TOGGLED)
+    {
+        strcpy(text, (control->value != 0) ? "ON" : "OFF");
+    }
+    else if (control->properties & FLAG_CONTROL_TRIGGER)
+    {
+        strcpy(text, "PUSH");
+    }
+    else
+    {
+        value_to_text(control->value, text);
+
+        if (control->unit && control->unit[0] && strcmp(control->unit, "none") != 0)
+        {
+            strncat(text, " ", size - strlen(text) - 1);
+            strncat(text, control->unit, size - strlen(text) - 1);
+        }
+    }
+}
+
+void screen_plugin_params(const plugin_params_t *params)
+{
+    glcd_t *display = hardware_glcds(DISPLAY_RIGHT);
+    uint8_t i;
+
+    glcd_clear(display, GLCD_WHITE);
+
+    textbox_t title_box = {};
+    title_box.color = GLCD_BLACK;
+    title_box.mode = TEXT_SINGLE_LINE;
+    title_box.font = Terminal3x5;
+    title_box.top_margin = 1;
+    title_box.align = ALIGN_CENTER_TOP;
+    title_box.text = params->title;
+    widget_textbox(display, &title_box);
+    glcd_rect_invert(display, 0, 0, DISPLAY_WIDTH, 7);
+
+    for (i = 0; i < BM_PARAM_ROWS; i++)
+    {
+        const control_t *control = params->controls[i];
+        uint8_t y = PARAMS_ROW_Y + i * PARAMS_ROW_PITCH;
+        char value[24];
+        int16_t value_x;
+        glcd_rect_t clip;
+
+        if (!control) continue;
+
+        param_value_text(control, value, sizeof(value));
+        value_x = DISPLAY_WIDTH - 4 - glcd_text_width(Terminal3x5, value);
+        if (value_x < DISPLAY_WIDTH / 2) value_x = DISPLAY_WIDTH / 2;
+
+        // the name gives way to the value
+        clip.x = 0;
+        clip.y = y;
+        clip.width = value_x - 3;
+        clip.height = PARAMS_ROW_PITCH;
+        glcd_text_clip(display, &clip, 2, y + 1, control->label, Terminal3x5, GLCD_BLACK);
+
+        clip.x = value_x;
+        clip.width = DISPLAY_WIDTH - 2 - value_x;
+        glcd_text_clip(display, &clip, value_x, y + 1, value, Terminal3x5, GLCD_BLACK);
+
+        if (params->first + i == params->hover)
+        {
+            if (params->editing)
+                glcd_rect_invert(display, value_x - 2, y, DISPLAY_WIDTH - 2 - (value_x - 2), PARAMS_ROW_PITCH);
+            else
+                glcd_rect_invert(display, 0, y, DISPLAY_WIDTH - 2, PARAMS_ROW_PITCH);
+        }
+    }
+
+    // where this page is among all of them
+    if (params->total > BM_PARAM_ROWS)
+    {
+        uint8_t track = DISPLAY_HEIGHT - PARAMS_ROW_Y;
+        uint8_t top = PARAMS_ROW_Y + (track * params->first) / params->total;
+        uint8_t length = (track * BM_PARAM_ROWS) / params->total;
+
+        if (length < 3) length = 3;
+        if (top + length > DISPLAY_HEIGHT) length = DISPLAY_HEIGHT - top;
+
+        glcd_vline(display, DISPLAY_WIDTH - 1, top, length, GLCD_BLACK);
     }
 }

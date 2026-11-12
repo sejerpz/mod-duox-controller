@@ -8,8 +8,12 @@
 *           draws a control over the graph.
 *
 *           Left display: the graph, or the plugins by name when the board is too big to find a
-*           box in the picture; holding ENC1 switches between the two. Right display: the box
-*           under the cursor. ENC1 walks the view on the left, BTN1 goes back to the menu.
+*           box in the picture; holding ENC1 switches between the two. ENC1 walks the view on the
+*           left, BTN1 goes back to the menu.
+*
+*           Right display: the parameters of the plugin under the cursor, a page at a time. ENC2
+*           walks them; a click flips a switch or fires a trigger, and on anything else starts and
+*           ends the edit, during which ENC2 turns the value.
 ************************************************************************************************************************
 */
 
@@ -24,6 +28,7 @@
 */
 
 #include <stdint.h>
+#include "data.h"
 
 
 /*
@@ -36,6 +41,26 @@
 #define BM_BUTTON_BACK      0
 #define BM_BUTTON_ADD       1
 #define BM_BUTTON_DEL       2
+
+// rows of the parameter page on the right display; mod-ui sends one page as controls with
+// hw_id 0 .. BM_PARAM_ROWS - 1
+#define BM_PARAM_ROWS       7
+
+
+/*
+************************************************************************************************************************
+*           DATA TYPES
+************************************************************************************************************************
+*/
+
+typedef struct PLUGIN_PARAMS_T {
+    const char *title;
+    control_t *controls[BM_PARAM_ROWS];     // the page in hand, by hw_id
+    uint8_t total;          // parameters of the plugin, with bypass and presets
+    uint8_t first;          // position of controls[0] among them
+    uint8_t hover;          // the cursor, among them
+    uint8_t editing;        // ENC2 turns the value under the cursor
+} plugin_params_t;
 
 
 /*
@@ -66,6 +91,13 @@ void BM_down(uint8_t encoder);
 void BM_encoder_click(uint8_t encoder);
 void BM_encoder_hold(uint8_t encoder);
 void BM_button_pressed(uint8_t button);
+
+// A control_add of the host. Taken only while a page of parameters is being asked for, since
+// mod-ui sends it with the hw_ids of the real actuators; returns 0 when it is not ours.
+uint8_t BM_add_control(control_t *control);
+
+// The host changed a value on the page, a preset load most of the time.
+void BM_set_control(uint8_t hw_id, float value);
 
 // The host says the board changed. Only a flag: the refetch happens in BM_tick().
 void BM_plugin_map_stale(void);
