@@ -243,7 +243,8 @@ static void request_plugin_map(int16_t focus_id, uint8_t initial)
     // insert the node to centre on; ignored by mod-ui on an initial request
     i += int_to_str(focus_id, &buffer[i], sizeof(buffer) - i, 0);
 
-    buffer[i++] = 0;
+    // not counted: ui_comm_webgui_send() sends the terminator itself, one past the length given
+    buffer[i] = 0;
 
     // sends the data to GUI
     ui_comm_webgui_send(buffer, i);
@@ -267,7 +268,8 @@ static void request_change_notify(uint8_t on)
 
     i = copy_command((char *)buffer, CMD_BUILDER_PLUGIN_NOTIFY);
     i += int_to_str(on, &buffer[i], sizeof(buffer) - i, 0);
-    buffer[i++] = 0;
+    // not counted: ui_comm_webgui_send() sends the terminator itself, one past the length given
+    buffer[i] = 0;
 
     ui_comm_webgui_send(buffer, i);
     ui_comm_webgui_wait_response();
@@ -360,7 +362,8 @@ static void request_plugin_list(int16_t first, int16_t focus_id)
     i += int_to_str(first, &buffer[i], sizeof(buffer) - i, 0);
     buffer[i++] = ' ';
     i += int_to_str(focus_id, &buffer[i], sizeof(buffer) - i, 0);
-    buffer[i++] = 0;
+    // not counted: ui_comm_webgui_send() sends the terminator itself, one past the length given
+    buffer[i] = 0;
 
     ui_comm_webgui_send(buffer, i);
     ui_comm_webgui_wait_response();
@@ -619,7 +622,8 @@ static void request_controls(uint8_t start, uint8_t count)
     i += int_to_str(start, &buffer[i], sizeof(buffer) - i, 0);
     buffer[i++] = ' ';
     i += int_to_str(count, &buffer[i], sizeof(buffer) - i, 0);
-    buffer[i++] = 0;
+    // not counted: ui_comm_webgui_send() sends the terminator itself, one past the length given
+    buffer[i] = 0;
 
     g_receiving_stamp = xTaskGetTickCount();
     g_receiving_controls = count;
@@ -732,7 +736,8 @@ static void send_control_set(control_t *control)
     i += int_to_str(control->hw_id, &buffer[i], sizeof(buffer) - i, 0);
     buffer[i++] = ' ';
     i += float_to_str(control->value, &buffer[i], sizeof(buffer) - i, 3);
-    buffer[i++] = 0;
+    // not counted: ui_comm_webgui_send() sends the terminator itself, one past the length given
+    buffer[i] = 0;
 
     ui_comm_webgui_set_response_cb(NULL, NULL);
     ui_comm_webgui_clear_tx_buffer();
@@ -789,7 +794,8 @@ static void request_control_page(control_t *control, int16_t index, uint8_t up)
     i += int_to_str(up ? FLAG_PAGINATION_PAGE_UP : 0, &buffer[i], sizeof(buffer) - i, 0);
     buffer[i++] = ' ';
     i += int_to_str(index, &buffer[i], sizeof(buffer) - i, 0);
-    buffer[i++] = 0;
+    // not counted: ui_comm_webgui_send() sends the terminator itself, one past the length given
+    buffer[i] = 0;
 
     ui_comm_webgui_send(buffer, i);
     ui_comm_webgui_wait_response();
