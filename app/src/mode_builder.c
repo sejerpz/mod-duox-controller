@@ -173,6 +173,14 @@ static portTickType g_del_stamp;
  */
 static uint8_t g_held[2];
 
+/*
+ * ENC2 reports a hold after TOOL_MODE_TIME/10, which is for the master volume and would make
+ * a hold of every click. Its hold is only noted when the driver reports it: let go before
+ * TOOL_MODE_TIME it is the click the driver has cancelled, held on past it BM_tick() fires it.
+ */
+static volatile uint8_t g_enc2_pressed;
+static portTickType g_enc2_stamp;
+
 /* NEW PEDALBOARD from the menu: 1 while its load runs, 2 once it has ended */
 static volatile uint8_t g_enter_after_load;
 static portTickType g_enter_after_load_stamp;
@@ -1571,7 +1579,7 @@ void BM_encoder_click(uint8_t encoder)
     xSemaphoreGive(module_mutex);
 }
 
-void BM_encoder_hold(uint8_t encoder)
+static void encoder_hold(uint8_t encoder)
 {
     if (encoder < 2) g_held[encoder] = 1;
 
@@ -1586,8 +1594,29 @@ void BM_encoder_hold(uint8_t encoder)
     xSemaphoreGive(module_mutex);
 }
 
+void BM_encoder_hold(uint8_t encoder)
+{
+    if (encoder == 1)
+    {
+        g_enc2_stamp = xTaskGetTickCount();
+        g_enc2_pressed = 1;
+        return;
+    }
+
+    encoder_hold(encoder);
+}
+
 void BM_encoder_released(uint8_t encoder)
 {
+    // ENC2 let go before its real hold time: the click the early hold took away
+    if (encoder == 1 && g_enc2_pressed)
+    {
+        g_enc2_pressed = 0;
+        g_held[1] = 0;
+        BM_encoder_click(1);
+        return;
+    }
+
     // the click of this release, if any, came first and has been dropped already
     if (encoder < 2) g_held[encoder] = 0;
 
@@ -1712,6 +1741,13 @@ void BM_plugin_map_stale(void)
 
 void BM_tick(void)
 {
+    if (g_enc2_pressed &&
+        (xTaskGetTickCount() - g_enc2_stamp) >= ((TOOL_MODE_TIME - TOOL_MODE_TIME/10) / portTICK_RATE_MS))
+    {
+        g_enc2_pressed = 0;
+        encoder_hold(1);
+    }
+
     // NEW PEDALBOARD, now that it is loaded and its addressings have arrived: from the menu
     // it was asked from, if still there
     if (g_enter_after_load == 2 &&
