@@ -90,6 +90,7 @@ void BM_up(uint8_t encoder);
 void BM_down(uint8_t encoder);
 void BM_encoder_click(uint8_t encoder);
 void BM_encoder_hold(uint8_t encoder);
+void BM_encoder_released(uint8_t encoder);
 void BM_button_pressed(uint8_t button);
 
 // A control_add of the host. Taken only while a page of parameters is being asked for, since
@@ -98,6 +99,14 @@ uint8_t BM_add_control(control_t *control);
 
 // The host changed a value on the page, a preset load most of the time.
 void BM_set_control(uint8_t hw_id, float value);
+
+// The graph again around <focus>, for the managers once they have changed the board.
+void BM_refresh_graph(int16_t focus);
+
+// NEW PEDALBOARD from the menu: the builder opens on it once its load has ended, which the
+// host reports with BM_pedalboard_loaded().
+void BM_enter_after_load(void);
+void BM_pedalboard_loaded(void);
 
 // The host says the board changed. Only a flag: the refetch happens in BM_tick().
 void BM_plugin_map_stale(void);

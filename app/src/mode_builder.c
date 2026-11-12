@@ -19,6 +19,9 @@
 #include "ui_comm.h"
 #include "mod-protocol.h"
 #include "mode_builder.h"
+#include "mode_builder_connmanager.h"
+#include "mode_builder_plugin_manager.h"
+#include "mode_builder_bindings_manager.h"
 #include "plugin_map.h"
 
 
@@ -61,6 +64,21 @@
 
 // how long the control_adds of a page are waited for after the answer, in ms
 #define PARAMS_RECEIVE_TIMEOUT 2000
+
+/*
+ * How long the host has to have sent no control_add before a page is asked for, in ms, and
+ * how long that is waited for at most. A pedalboard load, or a binding made, has it send
+ * the panel's addressings one after the other; what it still has queued when a page is
+ * asked for goes out first, ahead of the page and with the same hw_ids.
+ */
+#define PARAMS_QUIET_MS     300
+#define PARAMS_QUIET_MAX_MS 2000
+
+// the half of a blink of something armed for deletion, in ms
+#define BM_BLINK_MS 400
+
+// a NEW PEDALBOARD is entered once its load has ended, or given up on after this, in ms
+#define BM_NEW_PB_TIMEOUT 15000
 
 
 /*
@@ -115,6 +133,9 @@ static char g_params_title[PLUGIN_MAP_TITLE_SIZE];
 static volatile uint8_t g_receiving_controls;
 static portTickType g_receiving_stamp;
 
+/* when the host last sent a control_add, ours or not */
+static volatile portTickType g_last_add_stamp;
+
 /* the cursor moved onto another plugin; BM_tick() fetches its parameters */
 static uint8_t g_params_pending;
 static portTickType g_params_stamp;
@@ -123,6 +144,38 @@ static portTickType g_params_stamp;
 static volatile uint8_t g_params_dirty;
 
 static volatile uint8_t g_active;
+
+/*
+ * What the panel is doing: the board itself, or one of the managers over it. The graph and
+ * the parameters are the board; the managers take the displays over until they are left.
+ */
+enum BuilderStates {
+    BM_STATE_BOARD,
+    BM_STATE_CONNECTIONS,
+    BM_STATE_ADD,
+    BM_STATE_BINDINGS,
+};
+static uint8_t g_state = BM_STATE_BOARD;
+
+/*
+ * A plugin is armed before it is removed: the first DEL starts it flashing, the second takes
+ * it off the board. Losing a plugin and its settings to a mis-hit button is not something an
+ * undo would get back, and there is no undo here.
+ */
+static uint8_t g_del_armed;
+static uint8_t g_del_off;
+static portTickType g_del_stamp;
+
+/*
+ * An encoder let go after a hold reports a click as well, which is not one: it would open
+ * the connections after the graph has turned into the list, or flip a switch after the
+ * bindings have opened. Set by the hold, and the click it finds it on is dropped.
+ */
+static uint8_t g_held[2];
+
+/* NEW PEDALBOARD from the menu: 1 while its load runs, 2 once it has ended */
+static volatile uint8_t g_enter_after_load;
+static portTickType g_enter_after_load_stamp;
 
 /*
  * The builder runs from two tasks: the actuators task for the encoders and buttons, and the
@@ -615,6 +668,15 @@ static void request_controls(uint8_t start, uint8_t count)
     ui_comm_webgui_set_response_cb(parse_controls_count, NULL);
     ui_comm_webgui_clear_tx_buffer();
 
+    // the host's own addressings first, while it is in the middle of sending them
+    {
+        portTickType start = xTaskGetTickCount();
+
+        while ((xTaskGetTickCount() - g_last_add_stamp) < (PARAMS_QUIET_MS / portTICK_RATE_MS) &&
+               (xTaskGetTickCount() - start) < (PARAMS_QUIET_MAX_MS / portTICK_RATE_MS))
+            vTaskDelay(10 / portTICK_RATE_MS);
+    }
+
     i = copy_command((char *)buffer, CMD_BUILDER_CONTROL_LIST);
     strcpy(&buffer[i], g_params_uid);
     i += strlen(g_params_uid);
@@ -933,6 +995,179 @@ static void toggle_view(void)
     params_follow(1);
 }
 
+/*
+ * DEL on the board
+ */
+static void del_disarm(void)
+{
+    g_del_armed = 0;
+    g_del_off = 0;
+    plugin_map_set_blink(&g_plugin_map, 0);
+}
+
+static void request_remove(int16_t node_id)
+{
+    uint8_t i;
+    char buffer[24];
+    memset(buffer, 0, sizeof buffer);
+
+    ui_comm_webgui_set_response_cb(NULL, NULL);
+    ui_comm_webgui_clear_tx_buffer();
+
+    i = copy_command((char *)buffer, CMD_BUILDER_PLUGIN_DELETE);
+    i += int_to_str(node_id, &buffer[i], sizeof(buffer) - i, 0);
+    // not counted: ui_comm_webgui_send() sends the terminator itself, one past the length given
+    buffer[i] = 0;
+
+    ui_comm_webgui_send(buffer, i);
+    ui_comm_webgui_wait_response();
+}
+
+// The graph's selection catches up with the list cursor before anything acts on the box.
+// Returns 0 when it could not -- the board changed under the list.
+static uint8_t board_sync(void)
+{
+    const plugin_list_row_t *row;
+    const plugin_map_node_t *node;
+
+    if (!g_list_view) return g_plugin_map_loaded;
+
+    row = plugin_list_hovered(&g_plugin_list);
+    if (!row) return 0;
+
+    list_sync(1);
+
+    node = plugin_map_selected(&g_plugin_map);
+    return node && node->id == row->id;
+}
+
+// the box the next walk of the board lands on, and the list follows
+static void board_refresh(int16_t focus)
+{
+    request_plugin_map(focus, 0);
+    if (g_list_view) list_reload(focus);
+    params_follow(1);
+}
+
+static void board_delete(void)
+{
+    const plugin_map_node_t *node;
+    int16_t landing, removed;
+
+    if (!board_sync())
+    {
+        del_disarm();
+        return;
+    }
+
+    node = plugin_map_selected(&g_plugin_map);
+
+    // the capture and playback boxes are drawn like the rest but are not on the board
+    if (!node || node->kind != BM_PLUGIN)
+    {
+        del_disarm();
+        return;
+    }
+
+    if (!g_del_armed)
+    {
+        g_del_armed = 1;
+        g_del_off = 0;
+        g_del_stamp = xTaskGetTickCount();
+        return;
+    }
+
+    // somewhere to stand once the box under the cursor is gone
+    landing = (node->next != BM_NONE) ? node->next : node->prev;
+    removed = node->id;
+
+    request_remove(removed);
+    del_disarm();
+    params_clear();
+
+    request_plugin_map(landing, 0);
+    // in the list the name after it takes its row, which is where the cursor already is
+    if (g_list_view) list_reload(removed);
+    params_follow(1);
+}
+
+/*
+ * The managers
+ */
+
+// whichever is open goes, without a word to the host
+static void managers_close(void)
+{
+    BM_conn_manager_close();
+    BM_plugin_manager_close();
+    BM_bindings_manager_close();
+    g_state = BM_STATE_BOARD;
+    plugin_map_set_view_mode(&g_plugin_map, PLUGIN_MAP_VIEW_GRAPH);
+}
+
+static void open_connections(void)
+{
+    if (!board_sync()) return;
+
+    BM_conn_manager_open(&g_plugin_map, &g_plugin_list);
+    if (BM_conn_manager_is_open()) g_state = BM_STATE_CONNECTIONS;
+}
+
+// the connection manager borrows the list for its chooser and leaves it cleared
+static void connections_closed(void)
+{
+    const plugin_map_node_t *node = plugin_map_selected(&g_plugin_map);
+
+    g_state = BM_STATE_BOARD;
+    plugin_map_set_view_mode(&g_plugin_map, PLUGIN_MAP_VIEW_GRAPH);
+
+    if (g_list_view)
+    {
+        list_reload(node ? node->id : BM_NONE);
+        g_list_view = g_plugin_list.loaded;
+    }
+
+    params_follow(1);
+}
+
+static void open_add(void)
+{
+    const plugin_map_node_t *node;
+
+    del_disarm();
+
+    // the box under the cursor is the hint for where the new one goes; none on an empty board
+    node = board_sync() ? plugin_map_selected(&g_plugin_map) : NULL;
+
+    BM_plugin_manager_open(node ? node->id : BM_NONE);
+    if (BM_plugin_manager_is_open()) g_state = BM_STATE_ADD;
+}
+
+static void add_plugin(void)
+{
+    int16_t added;
+
+    // the info covers only the plugins, and reading it is what comes before adding one
+    if (BM_plugin_manager_info_is_open()) BM_plugin_manager_info_close();
+
+    added = BM_plugin_manager_add();
+
+    if (BM_plugin_manager_is_open()) return;
+
+    g_state = BM_STATE_BOARD;
+
+    // land on what was just added, so it is there to wire up
+    board_refresh(added);
+}
+
+static void open_bindings(void)
+{
+    if (!board_sync()) return;
+
+    BM_bindings_manager_open(&g_plugin_map);
+    if (BM_bindings_manager_is_open()) g_state = BM_STATE_BINDINGS;
+}
+
 static void print_screen(void)
 {
     const plugin_map_node_t *node;
@@ -941,10 +1176,64 @@ static void print_screen(void)
     // a BM_drop() may have given the panel away while a request was waited on
     if (!g_active) return;
 
+    switch (g_state)
+    {
+        case BM_STATE_CONNECTIONS:
+        {
+            connections_t model;
+            uint8_t picking = BM_conn_manager_is_picking();
+
+            // the connection manager fills the list with the boxes it offers while picking
+            BM_conn_manager_fill(&model);
+            screen_connections(&model, &g_plugin_map, g_plugin_map_loaded, picking ? &g_plugin_list : NULL,
+                               picking ? BM_conn_manager_pick_title() : NULL);
+            return;
+        }
+
+        case BM_STATE_ADD:
+        {
+            plugin_manager_t model;
+
+            BM_plugin_manager_fill(&model);
+            screen_plugin_manager(&model);
+
+            // the info goes over the plugins, the categories stay
+            if (BM_plugin_manager_info_is_open())
+            {
+                plugin_info_t info;
+
+                BM_plugin_manager_fill_info(&info);
+                screen_plugin_info(&info);
+            }
+            return;
+        }
+
+        case BM_STATE_BINDINGS:
+        {
+            bindings_t model;
+
+            BM_bindings_manager_fill(&model);
+            screen_bindings(&model);
+            return;
+        }
+    }
+
     node = g_plugin_map_loaded ? plugin_map_selected(&g_plugin_map) : NULL;
     row = g_list_view ? plugin_list_hovered(&g_plugin_list) : NULL;
 
-    screen_plugin_map(&g_plugin_map, g_plugin_map_loaded, g_list_view ? &g_plugin_list : NULL);
+    {
+        uint8_t kind = row ? row->kind : (node ? node->kind : 0);
+        builder_chrome_t chrome = { .title = NULL, .labels = { "BACK", "ADD", NULL }, .blink = -1 };
+
+        // DEL on anything that can go: the capture and playback boxes are not on the board
+        if (kind == BM_PLUGIN)
+        {
+            chrome.labels[2] = "DEL";
+            if (g_del_armed && !g_del_off) chrome.blink = 2;
+        }
+
+        screen_plugin_map(&g_plugin_map, g_plugin_map_loaded, g_list_view ? &g_plugin_list : NULL, &chrome);
+    }
 
     if (g_params_id != BM_NONE)
     {
@@ -965,6 +1254,164 @@ static void print_screen(void)
         screen_plugin_details(NULL, 0, 0);
 }
 
+/*
+ * The encoders and the buttons, by state. ENC1 is the left display's, ENC2 the right one's.
+ */
+static void board_turn(uint8_t encoder, int8_t dir)
+{
+    if (encoder == 0)
+    {
+        // an armed DEL is about the box under the cursor, so moving off it disarms
+        del_disarm();
+
+        if (g_list_view)
+            list_move(dir);
+        else
+            plugin_map_move(dir > 0 ? PLUGIN_MAP_NEXT : PLUGIN_MAP_PREV);
+
+        params_follow(0);
+    }
+    else
+    {
+        params_move(dir);
+    }
+}
+
+static void turn(uint8_t encoder, int8_t dir)
+{
+    switch (g_state)
+    {
+        case BM_STATE_BOARD:
+            board_turn(encoder, dir);
+            break;
+
+        case BM_STATE_CONNECTIONS:
+            // ENC2 walks the list -- and the chooser while a box is picked -- and ENC1 the cables
+            // behind the row under the cursor, or the chooser too, where it is on screen
+            if (encoder == 1 || BM_conn_manager_is_picking())
+                BM_conn_manager_turn(dir);
+            else
+                BM_conn_manager_pairs_turn(dir);
+
+            // stepping back off the first row closes it
+            if (!BM_conn_manager_is_open()) connections_closed();
+            break;
+
+        case BM_STATE_ADD:
+            if (encoder == 1 && BM_plugin_manager_info_is_open())
+                BM_plugin_manager_info_scroll(dir);
+            else
+                BM_plugin_manager_turn(encoder, dir);
+            break;
+
+        case BM_STATE_BINDINGS:
+            BM_bindings_manager_turn(encoder, dir);
+            break;
+    }
+}
+
+static void click(uint8_t encoder)
+{
+    switch (g_state)
+    {
+        case BM_STATE_BOARD:
+            del_disarm();
+            if (encoder == 0) open_connections();
+            else params_click();
+            break;
+
+        case BM_STATE_CONNECTIONS:
+            BM_conn_manager_click();
+            if (!BM_conn_manager_is_open()) connections_closed();
+            break;
+
+        case BM_STATE_ADD:
+            BM_plugin_manager_click(encoder);
+            break;
+
+        case BM_STATE_BINDINGS:
+            // the two clicks walk the pages of the board, one each way
+            BM_bindings_manager_turn(2, encoder ? 1 : -1);
+            break;
+    }
+}
+
+static void hold(uint8_t encoder)
+{
+    switch (g_state)
+    {
+        case BM_STATE_BOARD:
+            del_disarm();
+            if (encoder == 0) toggle_view();
+            else open_bindings();
+            break;
+
+        case BM_STATE_ADD:
+            BM_plugin_manager_hold(encoder);
+            break;
+    }
+}
+
+static void button(uint8_t which)
+{
+    switch (g_state)
+    {
+        case BM_STATE_BOARD:
+            if (which == BM_BUTTON_ADD) open_add();
+            else if (which == BM_BUTTON_DEL) board_delete();
+            break;
+
+        case BM_STATE_CONNECTIONS:
+            if (which == BM_BUTTON_BACK) BM_conn_manager_back();
+            else if (which == BM_BUTTON_ADD) BM_conn_manager_delete();
+            else BM_conn_manager_filter();
+
+            if (!BM_conn_manager_is_open()) connections_closed();
+            break;
+
+        case BM_STATE_ADD:
+            if (which == BM_BUTTON_BACK)
+            {
+                // BACK takes the info away first, and the lists only after it
+                if (BM_plugin_manager_info_is_open())
+                {
+                    BM_plugin_manager_info_close();
+                }
+                else
+                {
+                    BM_plugin_manager_close();
+                    g_state = BM_STATE_BOARD;
+                    params_follow(1);
+                }
+            }
+            else if (which == BM_BUTTON_ADD)
+            {
+                add_plugin();
+            }
+            else
+            {
+                BM_plugin_manager_filter();
+            }
+            break;
+
+        case BM_STATE_BINDINGS:
+            if (which == BM_BUTTON_BACK)
+            {
+                BM_bindings_manager_close();
+                g_state = BM_STATE_BOARD;
+            }
+            else if (which == BM_BUTTON_ADD)
+            {
+                BM_bindings_manager_add();
+            }
+            else
+            {
+                BM_bindings_manager_del();
+            }
+            break;
+    }
+}
+
 
 /*
 ************************************************************************************************************************
@@ -978,6 +1425,10 @@ void BM_init(void)
 
     plugin_map_init(&g_plugin_map);
     plugin_list_clear(&g_plugin_list);
+
+    BM_conn_manager_init();
+    BM_plugin_manager_init();
+    BM_bindings_manager_init();
 
     // the viewport sits inside the outlines and above the button labels, so the graph is
     // clipped to it rather than painted over the chrome
@@ -994,7 +1445,11 @@ void BM_enter(void)
     xSemaphoreTake(module_mutex, portMAX_DELAY);
 
     g_active = 1;
+    // a manager the builder was dropped from, by a pedalboard load or the host coming back
+    managers_close();
     g_restore_menu = 0;
+    g_enter_after_load = 0;
+    del_disarm();
     g_unwatch = 0;
     g_plugin_map_stale = 0;
     g_list_sync_pending = 0;
@@ -1043,6 +1498,10 @@ void BM_exit(void)
     g_active = 0;
     g_plugin_map_stale = 0;
     params_clear();
+    del_disarm();
+
+    // a manager left open goes with the builder
+    managers_close();
 
     // nothing should be running on the server for a screen nobody is on
     if (g_watching)
@@ -1073,21 +1532,7 @@ void BM_up(uint8_t encoder)
 
     if (g_active)
     {
-        // ENC1 walks whichever view is on the left display, ENC2 the parameters
-        if (encoder == 0)
-        {
-            if (g_list_view)
-                list_move(-1);
-            else
-                plugin_map_move(PLUGIN_MAP_PREV);
-
-            params_follow(0);
-        }
-        else
-        {
-            params_move(-1);
-        }
-
+        turn(encoder, -1);
         print_screen();
     }
 
@@ -1100,21 +1545,7 @@ void BM_down(uint8_t encoder)
 
     if (g_active)
     {
-        // ENC1 walks whichever view is on the left display, ENC2 the parameters
-        if (encoder == 0)
-        {
-            if (g_list_view)
-                list_move(1);
-            else
-                plugin_map_move(PLUGIN_MAP_NEXT);
-
-            params_follow(0);
-        }
-        else
-        {
-            params_move(1);
-        }
-
+        turn(encoder, 1);
         print_screen();
     }
 
@@ -1123,13 +1554,17 @@ void BM_down(uint8_t encoder)
 
 void BM_encoder_click(uint8_t encoder)
 {
-    if (encoder != 1) return;
+    if (encoder < 2 && g_held[encoder])
+    {
+        g_held[encoder] = 0;
+        return;
+    }
 
     xSemaphoreTake(module_mutex, portMAX_DELAY);
 
     if (g_active)
     {
-        params_click();
+        click(encoder);
         print_screen();
     }
 
@@ -1138,27 +1573,71 @@ void BM_encoder_click(uint8_t encoder)
 
 void BM_encoder_hold(uint8_t encoder)
 {
-    if (encoder != 0) return;
+    if (encoder < 2) g_held[encoder] = 1;
 
     xSemaphoreTake(module_mutex, portMAX_DELAY);
 
     if (g_active)
     {
-        toggle_view();
+        hold(encoder);
         print_screen();
     }
 
     xSemaphoreGive(module_mutex);
 }
 
-void BM_button_pressed(uint8_t button)
+void BM_encoder_released(uint8_t encoder)
 {
-    if (button == BM_BUTTON_BACK)
+    // the click of this release, if any, came first and has been dropped already
+    if (encoder < 2) g_held[encoder] = 0;
+
+    xSemaphoreTake(module_mutex, portMAX_DELAY);
+
+    // the end of a scrub through the plugins by first letter
+    if (g_active && g_state == BM_STATE_ADD)
+    {
+        BM_plugin_manager_released(encoder);
+        print_screen();
+    }
+
+    xSemaphoreGive(module_mutex);
+}
+
+void BM_button_pressed(uint8_t which)
+{
+    // BACK on the board leaves the builder, and takes the mutex itself
+    if (which == BM_BUTTON_BACK && g_state == BM_STATE_BOARD)
+    {
         BM_exit();
+        return;
+    }
+
+    xSemaphoreTake(module_mutex, portMAX_DELAY);
+
+    if (g_active)
+    {
+        button(which);
+        print_screen();
+    }
+
+    xSemaphoreGive(module_mutex);
+}
+
+void BM_enter_after_load(void)
+{
+    g_enter_after_load_stamp = xTaskGetTickCount();
+    g_enter_after_load = 1;
+}
+
+void BM_pedalboard_loaded(void)
+{
+    if (g_enter_after_load == 1) g_enter_after_load = 2;
 }
 
 uint8_t BM_add_control(control_t *control)
 {
+    g_last_add_stamp = xTaskGetTickCount();
+
     if (!g_receiving_controls || !control || control->hw_id >= BM_PARAM_ROWS) return 0;
 
     if ((xTaskGetTickCount() - g_receiving_stamp) >= (PARAMS_RECEIVE_TIMEOUT / portTICK_RATE_MS))
@@ -1217,6 +1696,15 @@ void BM_set_control(uint8_t hw_id, float value)
     g_params_dirty = 1;
 }
 
+/*
+ * The graph again, around <focus>, after the managers changed the board. Called from inside
+ * the builder, with the mutex already held.
+ */
+void BM_refresh_graph(int16_t focus)
+{
+    request_plugin_map(focus, 0);
+}
+
 void BM_plugin_map_stale(void)
 {
     g_plugin_map_stale = 1;
@@ -1224,6 +1712,20 @@ void BM_plugin_map_stale(void)
 
 void BM_tick(void)
 {
+    // NEW PEDALBOARD, now that it is loaded and its addressings have arrived: from the menu
+    // it was asked from, if still there
+    if (g_enter_after_load == 2 &&
+        (xTaskGetTickCount() - g_last_add_stamp) >= (PARAMS_QUIET_MS / portTICK_RATE_MS))
+    {
+        g_enter_after_load = 0;
+        if (!g_active) naveg_builder_enter();
+        return;
+    }
+
+    if (g_enter_after_load == 1 &&
+        (xTaskGetTickCount() - g_enter_after_load_stamp) >= (BM_NEW_PB_TIMEOUT / portTICK_RATE_MS))
+        g_enter_after_load = 0;
+
     if (g_unwatch)
     {
         xSemaphoreTake(module_mutex, portMAX_DELAY);
@@ -1246,6 +1748,40 @@ void BM_tick(void)
             naveg_builder_left();
 
         return;
+    }
+
+    if (g_active && g_state != BM_STATE_BOARD)
+    {
+        uint8_t redraw = 0;
+
+        xSemaphoreTake(module_mutex, portMAX_DELAY);
+
+        // what is armed for deletion in a manager blinks
+        if (g_state == BM_STATE_CONNECTIONS) redraw = BM_conn_manager_tick();
+        else if (g_state == BM_STATE_BINDINGS) redraw = BM_bindings_manager_tick();
+
+        if (redraw) print_screen();
+
+        xSemaphoreGive(module_mutex);
+
+        // the managers own the panel while they are up: nothing below is about them
+        return;
+    }
+
+    if (g_active && g_del_armed &&
+        (xTaskGetTickCount() - g_del_stamp) >= (BM_BLINK_MS / portTICK_RATE_MS))
+    {
+        xSemaphoreTake(module_mutex, portMAX_DELAY);
+
+        if (g_active && g_del_armed)
+        {
+            g_del_stamp = xTaskGetTickCount();
+            g_del_off = !g_del_off;
+            plugin_map_set_blink(&g_plugin_map, g_del_off);
+            print_screen();
+        }
+
+        xSemaphoreGive(module_mutex);
     }
 
     if (g_active && g_list_sync_pending &&

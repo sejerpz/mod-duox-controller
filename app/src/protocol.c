@@ -636,6 +636,9 @@ void cb_pedalboard_load_end(uint8_t serial_id, proto_t *proto)
     UNUSED_PARAM(serial_id);
 
     protocol_send_response(CMD_RESPONSE, 0, proto);
+
+    // a NEW PEDALBOARD from the menu goes on into the builder, now that it is loaded
+    BM_pedalboard_loaded();
 }
 
 /*

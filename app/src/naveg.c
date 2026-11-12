@@ -1650,9 +1650,7 @@ static void menu_enter(uint8_t display_id)
     // the builder takes both displays over the menu, which stays on underneath
     if (item->desc->id == PEDALBOARD_EDIT_ID)
     {
-        g_update_cb = NULL;
-        g_update_data = NULL;
-        BM_enter();
+        naveg_builder_enter();
         return;
     }
 
@@ -2299,6 +2297,27 @@ void naveg_wait_for_ui(void)
     screen_clear(1);
     screen_image(0, mod_logo);
     screen_image(1, mod_duo);
+}
+
+/*
+ * The builder over the menu, which stays on underneath: from EDIT PEDALBOARD, and once a NEW
+ * PEDALBOARD asked for from the menu has loaded -- if the menu is still there.
+ */
+void naveg_builder_enter(void)
+{
+    if (!tool_is_on(DISPLAY_TOOL_SYSTEM) || BM_is_active()) return;
+
+    // nothing of the menu redraws itself over the builder
+    g_update_cb = NULL;
+    g_update_data = NULL;
+
+    BM_enter();
+}
+
+// the end of a hold on an encoder
+void naveg_encoder_released(uint8_t encoder)
+{
+    if (BM_is_active()) BM_encoder_released(encoder);
 }
 
 /*
@@ -3529,6 +3548,13 @@ uint8_t naveg_is_tool_mode(uint8_t display)
 
 void naveg_master_volume(uint8_t set)
 {
+    // the second encoder's hold, which is the builder's while it is up
+    if (BM_is_active())
+    {
+        BM_encoder_hold(set);
+        return;
+    }
+
     if (tool_is_on(DISPLAY_TOOL_SYSTEM) || (g_self_test_mode))
     {
         naveg_enter(set);

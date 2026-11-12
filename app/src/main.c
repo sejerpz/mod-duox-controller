@@ -343,6 +343,7 @@ static void actuators_task(void *pvParameters)
                     if (BUTTON_RELEASED(status))
                     {
                         if (id && naveg_is_master_vol()) naveg_master_volume(id);
+                        naveg_encoder_released(id);
                     }
                     if (ENCODER_TURNED_CW(status))
                     {
