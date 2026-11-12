@@ -137,6 +137,15 @@ void naveg_update_pb_list(void);
 
 uint8_t naveg_dialog(const char *msg, char *title);
 uint8_t naveg_ui_status(void);
+// the web interface is restarting: logo on both displays, controls ignored until boot
+void naveg_wait_for_ui(void);
+// the builder over the menu, and the builder having given the panel back to it
+void naveg_builder_enter(void);
+void naveg_builder_left(void);
+// the end of a hold on an encoder
+void naveg_encoder_released(uint8_t encoder);
+// boot received: if the web interface was restarting, the control view comes back
+void naveg_ui_booted(void);
 void naveg_pages_available(uint8_t page_1, uint8_t page_2, uint8_t page_3, uint8_t page_4, uint8_t page_5, uint8_t page_6);
 //refreshes screen with current menu item
 void naveg_settings_refresh(uint8_t display_id);
@@ -151,6 +160,9 @@ void naveg_bypass_refresh(uint8_t bypass_1, uint8_t bypass_2, uint8_t quick_bypa
 
 void naveg_set_acceleration(uint8_t display_id);
 
+// prints the control screen again on the displays given, one bit each (bit 0 the left one), when no tool
+// holds them: what the plugin widgets need when one comes or goes
+void naveg_print_control_screens(uint8_t displays);
 void naveg_print_pb_name(uint8_t display);
 
 void naveg_lock_pots(uint8_t lock);

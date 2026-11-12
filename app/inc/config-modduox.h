@@ -267,6 +267,8 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
 //pedalboard sub menu
 #define PEDALBOARD_SAVE_ID   PEDALBOARD_ID+2
 #define PEDALBOARD_RESET_ID  PEDALBOARD_ID+3
+#define PEDALBOARD_NEW_ID    PEDALBOARD_ID+4
+#define PEDALBOARD_EDIT_ID   PEDALBOARD_ID+5
 
 //bypass sub menu
 #define BP1_ID              BYPASS_ID + 1
@@ -316,6 +318,8 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
 #define DISP_CONTRAST_R_ID  DEVICE_SETTINGS_ID + 8
 #define LED_BRIGHTNESS_ID   DEVICE_SETTINGS_ID + 9
 #define USB_B_MODE_ID       DEVICE_SETTINGS_ID + 10
+#define AUDIO_FRAME_SIZE_ID DEVICE_SETTINGS_ID + 11
+#define WEB_UI_ID           DEVICE_SETTINGS_ID + 12
 
 #define BLUETOOTH_DISCO_ID  BLUETOOTH_ID+2
 
@@ -325,8 +329,10 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
     {"SETTINGS",                        MENU_LIST,      ROOT_ID,              -1,                 NULL                       , 0},  \
     {"BANKS",                           MENU_NONE,      BANKS_ID,             ROOT_ID,            system_banks_cb            , 0},  \
     {"CURRENT PEDALBOARD",              MENU_LIST,      PEDALBOARD_ID,        ROOT_ID,            NULL                       , 0},  \
-    {"SAVE STATE",                      MENU_CONFIRM,   PEDALBOARD_SAVE_ID,   PEDALBOARD_ID,      system_pedalboard_cb       , 0},  \
-    {"RESET STATE",                     MENU_CONFIRM,   PEDALBOARD_RESET_ID,  PEDALBOARD_ID,      system_pedalboard_cb       , 0},  \
+    {"EDIT PEDALBOARD",                 MENU_NONE,      PEDALBOARD_EDIT_ID,   PEDALBOARD_ID,      NULL                       , 0},  \
+    {"SAVE PEDALBOARD",                 MENU_CONFIRM,   PEDALBOARD_SAVE_ID,   PEDALBOARD_ID,      system_pedalboard_cb       , 0},  \
+    {"RESET PEDALBOARD",                MENU_CONFIRM,   PEDALBOARD_RESET_ID,  PEDALBOARD_ID,      system_pedalboard_cb       , 0},  \
+    {"NEW PEDALBOARD",                  MENU_CONFIRM,   PEDALBOARD_NEW_ID,    PEDALBOARD_ID,      system_pedalboard_cb       , 0},  \
     {"HARDWARE BYPASS",                 MENU_LIST,      BYPASS_ID,            ROOT_ID,            system_quick_bypass_cb     , 0},  \
     {"CHANNEL 1",                       MENU_TOGGLE,    BP1_ID,               BYPASS_ID,          system_bypass_cb           , 0},  \
     {"CHANNEL 2",                       MENU_TOGGLE,    BP2_ID,               BYPASS_ID,          system_bypass_cb           , 0},  \
@@ -380,6 +386,8 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
     {"DEVICE SETTINGS",                 MENU_LIST,      DEVICE_SETTINGS_ID,   SYSTEM_ID,          NULL                       , 0},  \
     {"< BACK TO SYSTEM",                MENU_RETURN,    DEVICE_SETTINGS_ID+1, DEVICE_SETTINGS_ID, NULL                       , 0},  \
     {"USB-B MODE",                      MENU_SET,       USB_B_MODE_ID,        DEVICE_SETTINGS_ID, system_usb_b_cb            , 0},  \
+    {"AUDIO FRAME SIZE",                MENU_TOGGLE,    AUDIO_FRAME_SIZE_ID,  DEVICE_SETTINGS_ID, system_audio_frame_size_cb , 0},  \
+    {"DEFAULT WEB INTERFACE",           MENU_CONFIRM,   WEB_UI_ID,            DEVICE_SETTINGS_ID, system_web_ui_cb           , 0},  \
     {"DISPLAY BRIGHTNESS",              MENU_TOGGLE,    DISP_BL_ID,           DEVICE_SETTINGS_ID, system_display_cb          , 0},  \
     {"DISPLAY CONTRAST LEFT",           MENU_SET,       DISP_CONTRAST_L_ID,   DEVICE_SETTINGS_ID, system_display_contrast_lcb, 0},  \
     {"DISPLAY CONTRAST RIGHT",          MENU_SET,       DISP_CONTRAST_R_ID,   DEVICE_SETTINGS_ID, system_display_contrast_rcb, 0},  \
@@ -417,8 +425,10 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
 #define POPUP_CONTENT   \
     {PEDALBOARD_ID, "pedalboard", "To access the selected menu\nitem, disconnect from the\ngraphical web interface."}, \
     {BANKS_ID, "Banks", "To access the selected menu\nitem, disconnect from the\ngraphical web interface."}, \
-    {PEDALBOARD_SAVE_ID, "Save state", "Save current parameter values\nas the default for the active\npedalboard?"},         \
-    {PEDALBOARD_RESET_ID, "Reset state", "Reset all parameter values to\nthe last saved state for the\nactive pedalboard?"},      \
+    {PEDALBOARD_SAVE_ID, "Save pedalboard", "Save the active pedalboard:\nplugins, connections,\nbindings and values?"},         \
+    {PEDALBOARD_RESET_ID, "Reset pedalboard", "Undo every change made since\nthe last save of the active\npedalboard?"},      \
+    {WEB_UI_ID, "Web interface", "Switch the web interface back\nto the default one? It will\nrestart, the pedalboard keeps\nplaying."},      \
+    {PEDALBOARD_NEW_ID, "New pedalboard", "Replace the current pedalboard\nwith a new empty one?\nUnsaved changes are lost."},      \
     {BLUETOOTH_DISCO_ID, "Enable Bluetooth", "Bluetooth discovery mode is   now enabled for 2 minutes"},  \
     {UPGRADE_ID, "Start System Upgrade", "To start the system upgrade\nprocess, press and hold down\nthe leftmost button and press\nyes. "}, \
     {PROFILES_ID+1, "Load user profile A", PROFILE_POPUP_LOAD_TXT}, \

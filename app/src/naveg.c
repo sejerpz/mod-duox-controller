@@ -18,6 +18,9 @@
 #include "actuator.h"
 #include "calibration.h"
 #include "mod-protocol.h"
+#include "images.h"
+#include "mode_builder.h"
+#include "widget_area.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -120,6 +123,7 @@ float g_pot_calibrations[2][POTS_COUNT] = {{0}};
 bool g_device_booted = false;
 bool g_dialog_active = false;
 bool g_pedalboards_need_update = false;
+static bool g_waiting_for_ui = false;
 
 /*
 ************************************************************************************************************************
@@ -269,6 +273,15 @@ static control_t *search_encoder(uint8_t hw_id)
         }
     }
     return NULL;
+}
+
+// the label of a scale point, empty when the value matched none (or there are none, e.g. presets none checked)
+static const char *scale_point_label(const control_t *control, uint8_t index)
+{
+    if (!control->scale_points || index >= control->scale_points_count)
+        return "";
+
+    return control->scale_points[index]->label;
 }
 
 // calculates the control value using the step
@@ -476,9 +489,11 @@ static void display_pot_rm(uint8_t hw_id)
     for (i = 0; i < POTS_COUNT; i++)
     {
         // if there is no controls assigned, load the default screen
-        if (!g_pots[i] && !display_has_tool_enabled(get_display_by_id(i, POTENTIOMETER)))
+        if (!g_pots[i])
         {
-            screen_pot(i, NULL);
+            // nothing to remove; redraw it unless a menu or the builder covers its display
+            if (!display_has_tool_enabled(get_display_by_id(i, POTENTIOMETER)))
+                screen_pot(i, NULL);
             continue;
         }
 
@@ -754,7 +769,7 @@ static void foot_control_add(control_t *control)
         if ((!display_has_tool_enabled(get_display_by_id(i, FOOT))) && !hardware_get_overlay_counter())
         {
             // updates the footer
-            screen_footer(control->hw_id - ENCODERS_COUNT, control->label, control->scale_points[i]->label, control->properties);
+            screen_footer(control->hw_id - ENCODERS_COUNT, control->label, scale_point_label(control, i), control->properties);
         }
     }
 }
@@ -997,7 +1012,8 @@ static void request_pedalboards(uint8_t dir, uint16_t bank_uid)
     // copy the bank uid
     i += int_to_str((bank_uid), &buffer[i], sizeof(buffer) - i, 0);
 
-    buffer[i++] = 0;
+    // not counted: ui_comm_webgui_send() sends the terminator itself, one past the length given
+    buffer[i] = 0;
 
     uint16_t prev_hover = g_current_pedalboard;
     uint16_t prev_selected = g_current_pedalboard;
@@ -1632,6 +1648,13 @@ static void menu_enter(uint8_t display_id)
         else if (g_current_main_item->desc->action_cb) g_current_main_item->desc->action_cb(g_current_main_item, MENU_EV_ENTER);
     }
 
+    // the builder takes both displays over the menu, which stays on underneath
+    if (item->desc->id == PEDALBOARD_EDIT_ID)
+    {
+        naveg_builder_enter();
+        return;
+    }
+
     // FIXME: that's dirty, so dirty...
     if (item->desc->id == BANKS_ID)
     {
@@ -1755,11 +1778,12 @@ static void menu_enter(uint8_t display_id)
                     else if (item->data.value ==4) profile_char = "D";
                     else profile_char = "X";
 
-                    char *txt =  g_menu_popups[i].popup_header;
-                    char * str3 = (char *) malloc(1 + strlen(txt)+ strlen(profile_char) );
-                    strcpy(str3, txt);
-                    strcat(str3, profile_char);
-                    item->data.popup_header = (str3);
+                    // newlib has no heap (nosys _sbrk); a static buffer also stops the leak on every enter
+                    static char save_profile_header[32];
+                    strncpy(save_profile_header, g_menu_popups[i].popup_header, sizeof(save_profile_header) - 2);
+                    save_profile_header[sizeof(save_profile_header) - 2] = '\0';
+                    strcat(save_profile_header, profile_char);
+                    item->data.popup_header = save_profile_header;
 
                 }
                 //cv toggle popups, they have a different popup depending on their current value
@@ -2191,6 +2215,8 @@ void naveg_init(void)
     // first xSemaphoreTake pass even if semaphore has not been given
     // http://sourceforge.net/p/freertos/discussion/382005/thread/04bfabb9
     xSemaphoreTake(g_dialog_sem, 0);
+
+    BM_init();
 }
 
 uint8_t naveg_get_actuator_type(uint8_t hw_id)
@@ -2257,6 +2283,64 @@ void naveg_initial_state(uint16_t max_menu, uint16_t page_min, uint16_t page_max
     g_naveg_pedalboards->selected = g_current_pedalboard;
 }
 
+void naveg_wait_for_ui(void)
+{
+    g_device_booted = false;
+    g_waiting_for_ui = true;
+
+    // the menu is left first: menu_enter does not redraw it once the tool is off
+    if (tool_is_on(DISPLAY_TOOL_SYSTEM))
+        naveg_toggle_tool(DISPLAY_TOOL_SYSTEM, 0);
+
+    naveg_turn_off_leds();
+
+    screen_clear(0);
+    screen_clear(1);
+    screen_image(0, mod_logo);
+    screen_image(1, mod_duo);
+}
+
+/*
+ * The builder over the menu, which stays on underneath: from EDIT PEDALBOARD, and once a NEW
+ * PEDALBOARD asked for from the menu has loaded -- if the menu is still there.
+ */
+void naveg_builder_enter(void)
+{
+    if (!tool_is_on(DISPLAY_TOOL_SYSTEM) || BM_is_active()) return;
+
+    // nothing of the menu redraws itself over the builder
+    g_update_cb = NULL;
+    g_update_data = NULL;
+
+    BM_enter();
+}
+
+// the end of a hold on an encoder
+void naveg_encoder_released(uint8_t encoder)
+{
+    if (BM_is_active()) BM_encoder_released(encoder);
+}
+
+/*
+ * The builder is gone and the menu it was opened from is still on underneath: put it back
+ * on both displays.
+ */
+void naveg_builder_left(void)
+{
+    if (!tool_is_on(DISPLAY_TOOL_SYSTEM)) return;
+
+    screen_system_menu(g_current_main_item);
+    screen_system_menu(g_current_item);
+}
+
+void naveg_ui_booted(void)
+{
+    if (!g_waiting_for_ui) return;
+
+    g_waiting_for_ui = false;
+    naveg_reload_display();
+}
+
 void naveg_ui_connection(uint8_t status)
 {
     if (!g_initialized) return;
@@ -2278,6 +2362,9 @@ void naveg_ui_connection(uint8_t status)
         g_naveg_pedalboards = NULL;
     }
 
+
+    // called from a protocol callback: the builder goes without a word to the host
+    BM_drop(0);
 
     if ((tool_is_on(DISPLAY_TOOL_NAVIG)) || tool_is_on(DISPLAY_TOOL_SYSTEM))
     {
@@ -2720,7 +2807,7 @@ void naveg_set_control(uint8_t hw_id, float value)
                 if (!display_has_tool_enabled(get_display_by_id(i, FOOT)))
                 {
                     // updates the footer
-                    screen_footer(control->hw_id - ENCODERS_COUNT, control->label, control->scale_points[i]->label, control->properties);
+                    screen_footer(control->hw_id - ENCODERS_COUNT, control->label, scale_point_label(control, i), control->properties);
                 }
             }
         }
@@ -2940,6 +3027,14 @@ void naveg_foot_change(uint8_t foot, uint8_t pressed)
     // checks the foot id
     if (foot >= FOOTSWITCHES_COUNT) return;
 
+    // the three buttons are the builder's while it is up, the footswitches nobody's
+    if (BM_is_active())
+    {
+        if (pressed && foot >= FOOTSWITCHES_ACTUATOR_COUNT)
+            BM_button_pressed(foot - FOOTSWITCHES_ACTUATOR_COUNT);
+        return;
+    }
+
     if (display_has_tool_enabled(get_display_by_id(foot, FOOT))) return;
 
     switch (foot)
@@ -3112,6 +3207,9 @@ void naveg_foot_change(uint8_t foot, uint8_t pressed)
                     naveg_remove_control(q);
                 }
 
+                //the plugin widgets of the new page
+                naveg_print_control_screens(WA_set_screen(page, 0));
+
                 naveg_turn_on_pagination_leds();
 
                 //clear actuator queue
@@ -3179,6 +3277,9 @@ void naveg_foot_change(uint8_t foot, uint8_t pressed)
                 {
                     naveg_remove_control(q);
                 }
+
+                //the plugin widgets of the new page
+                naveg_print_control_screens(WA_set_screen(page, 0));
 
                 naveg_turn_on_pagination_leds();
 
@@ -3253,6 +3354,7 @@ void naveg_reset_page(void)
 {
     //reset variable
     page = 0;
+    naveg_print_control_screens(WA_set_screen(page, 0));
 
     page_available[0] = 1;
     page_available[1] = 0;
@@ -3326,6 +3428,13 @@ void naveg_reload_display(void)
 void naveg_toggle_tool(uint8_t tool, uint8_t display)
 {
     if (!g_initialized) return;
+
+    // an encoder hold is the builder's while it is up, not the menu's
+    if (BM_is_active())
+    {
+        BM_encoder_hold(display);
+        return;
+    }
 
     //no tools in selftest
     if (g_self_test_mode)
@@ -3447,6 +3556,13 @@ uint8_t naveg_is_tool_mode(uint8_t display)
 
 void naveg_master_volume(uint8_t set)
 {
+    // the second encoder's hold, which is the builder's while it is up
+    if (BM_is_active())
+    {
+        BM_encoder_hold(set);
+        return;
+    }
+
     if (tool_is_on(DISPLAY_TOOL_SYSTEM) || (g_self_test_mode))
     {
         naveg_enter(set);
@@ -3485,6 +3601,30 @@ void naveg_pages_available(uint8_t page_1, uint8_t page_2, uint8_t page_3, uint8
     page_available[5] = page_6;
 
     naveg_turn_on_pagination_leds();
+}
+
+void naveg_print_control_screens(uint8_t displays)
+{
+    uint8_t display;
+
+    if (!g_initialized || BM_is_active()) return;
+
+    for (display = 0; display < SLOTS_COUNT; display++)
+    {
+        if (!(displays & (1 << display)) || display_has_tool_enabled(display)) continue;
+
+        screen_clear(display);
+        screen_encoder(display, g_encoders[display]);
+
+        //the pedalboard name on the left, the master volume on the right
+        if (display == 0)
+            naveg_print_pb_name(display);
+        else
+            naveg_master_volume(0);
+
+        draw_all_pots(display);
+        draw_all_foots(display);
+    }
 }
 
 void naveg_print_pb_name(uint8_t display)
@@ -3562,6 +3702,12 @@ void naveg_enter(uint8_t display)
 
     if ((!g_initialized)&&(g_update_cb)) return;
 
+    if (BM_is_active())
+    {
+        BM_encoder_click(display);
+        return;
+    }
+
     if (display_has_tool_enabled(display))
     {
         if (display == 0)
@@ -3611,6 +3757,12 @@ void naveg_up(uint8_t display)
         // send the data to GUI
         ui_comm_webgui_send(buffer, i);
 
+        return;
+    }
+
+    if (BM_is_active())
+    {
+        BM_up(display);
         return;
     }
 
@@ -3674,6 +3826,12 @@ void naveg_down(uint8_t display)
         // send the data to GUI
         ui_comm_webgui_send(buffer, i);
 
+        return;
+    }
+
+    if (BM_is_active())
+    {
+        BM_down(display);
         return;
     }
 
@@ -3747,6 +3905,11 @@ void naveg_set_active_pedalboard(uint8_t pedalboard_index)
     uint32_t index = pedalboard_index + 1;
 
     g_current_pedalboard = index;
+
+    // the lists are only there while navigating: after boot or a web-ui disconnect they are
+    // NULL, and a MIDI program change still sends pchng. The index above is enough then
+    if (!g_banks || !g_naveg_pedalboards)
+        return;
 
     if (g_current_bank == g_banks->selected) {
         g_naveg_pedalboards->hover = index;

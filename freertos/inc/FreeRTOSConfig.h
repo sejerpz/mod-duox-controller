@@ -104,7 +104,7 @@
 #define configMAX_TASK_NAME_LEN             ( 8 )
 #define configUSE_16_BIT_TICKS              0
 #define configIDLE_SHOULD_YIELD             0
-#define configUSE_MUTEXES                   0
+#define configUSE_MUTEXES                   1
 #define configUSE_COUNTING_SEMAPHORES       1
 #define configUSE_ALTERNATIVE_API           0
 #define configUSE_RECURSIVE_MUTEXES         0
@@ -145,7 +145,7 @@
 #define INCLUDE_vTaskDelayUntil                 1
 #define INCLUDE_vTaskDelay                      1
 #define INCLUDE_uxTaskGetStackHighWaterMark     0
-#define INCLUDE_xTaskGetSchedulerState          0
+#define INCLUDE_xTaskGetSchedulerState          1
 #define INCLUDE_xTaskGetCurrentTaskHandle       1
 #define INCLUDE_xTaskGetIdleTaskHandle          0
 #define INCLUDE_xTimerGetTimerDaemonTaskHandle  0

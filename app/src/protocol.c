@@ -19,6 +19,8 @@
 #include "cli.h"
 #include "calibration.h"
 #include "mod-protocol.h"
+#include "mode_builder.h"
+#include "widget_area.h"
 
 /*
 ************************************************************************************************************************
@@ -301,6 +303,8 @@ void protocol_init(void)
     protocol_add_command(CMD_GLCD_TEXT, cb_glcd_text);
     protocol_add_command(CMD_GLCD_DIALOG, cb_glcd_dialog);
     protocol_add_command(CMD_GLCD_DRAW, cb_glcd_draw);
+    protocol_add_command(CMD_WIDGET_AREA_ADD, cb_widget_area_add);
+    protocol_add_command(CMD_WIDGET_AREA_REMOVE, cb_widget_area_remove);
     protocol_add_command(CMD_DISP_BRIGHTNESS, cb_disp_brightness);
     protocol_add_command(CMD_GUI_CONNECTED, cb_gui_connection);
     protocol_add_command(CMD_GUI_DISCONNECTED, cb_gui_connection);
@@ -315,6 +319,10 @@ void protocol_init(void)
     protocol_add_command(CMD_DUO_BOOT, cb_boot);
     protocol_add_command(CMD_MENU_ITEM_CHANGE, cb_menu_item_changed);
     protocol_add_command(CMD_PEDALBOARD_CLEAR, cb_pedalboard_clear);
+    protocol_add_command(CMD_PEDALBOARD_LOADING_BEGIN, cb_pedalboard_load_begin);
+    protocol_add_command(CMD_PEDALBOARD_LOADING_END, cb_pedalboard_load_end);
+    protocol_add_command(CMD_BUILDER_PLUGIN_UPDATED, cb_plugin_map_updated);
+    protocol_add_command(CMD_BUILDER_CONTROL_SET, cb_builder_control_set);
     protocol_add_command(CMD_PEDALBOARD_NAME_SET, cb_pedalboard_name);
     protocol_add_command(CMD_DUOX_PAGES_AVAILABLE, cb_pages_available);
     protocol_add_command(CMD_SELFTEST_SAVE_POT_CALIBRATION, cb_save_pot_cal_val);
@@ -330,6 +338,8 @@ void protocol_init(void)
     protocol_add_command(CMD_SYS_CHANGE_UNIT, cb_change_assigment_unit);
     protocol_add_command(CMD_SYS_CHANGE_VALUE, cb_change_assigment_value);
     protocol_add_command(CMD_SYS_CHANGE_WIDGET_INDICATOR, cb_change_widget_indicator);
+    protocol_add_command(CMD_SYS_WIDGET_BITMAP, cb_widget_bitmap);
+    protocol_add_command(CMD_SYS_WIDGET_CLEAR, cb_widget_clear);
     protocol_add_command(CMD_PEDALBOARD_CHANGE, cb_pedalboard_change);
 }
 
@@ -422,6 +432,60 @@ void cb_glcd_draw(uint8_t serial_id, proto_t *proto)
     glcd_draw_image(hardware_glcds(glcd_id), x, y, msg_buffer, GLCD_BLACK);
 }
 
+// mod-ui places the areas on both displays side by side, x 0 to 255
+void cb_widget_area_add(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    const glcd_rect_t rect = {
+        atoi(proto->list[4]), atoi(proto->list[5]), atoi(proto->list[6]), atoi(proto->list[7])
+    };
+    uint8_t displays;
+
+    if (!WA_add(atoi(proto->list[3]), atoi(proto->list[1]), atoi(proto->list[2]), &rect, &displays))
+    {
+        protocol_send_response(CMD_RESPONSE, INVALID_ARGUMENT, proto);
+        return;
+    }
+
+    naveg_print_control_screens(displays);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+void cb_widget_area_remove(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    naveg_print_control_screens(WA_remove(atoi(proto->list[1])));
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+// bitmaps for an area that is not in view are dropped without complaint: the plugin may still be drawing
+// the page the user just left, and it redraws everything when the area is in view again
+void cb_widget_bitmap(uint8_t serial_id, proto_t *proto)
+{
+    if (serial_id != SYSTEM_SERIAL)
+        return;
+
+    WA_draw(atoi(proto->list[2]), atoi(proto->list[3]), atoi(proto->list[4]),
+            atoi(proto->list[5]), atoi(proto->list[6]), proto->list[7]);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+void cb_widget_clear(uint8_t serial_id, proto_t *proto)
+{
+    if (serial_id != SYSTEM_SERIAL)
+        return;
+
+    WA_draw(atoi(proto->list[2]), atoi(proto->list[3]), atoi(proto->list[4]),
+            atoi(proto->list[5]), atoi(proto->list[6]), NULL);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
 void cb_gui_connection(uint8_t serial_id, proto_t *proto)
 {    
     UNUSED_PARAM(serial_id);
@@ -451,7 +515,10 @@ void cb_control_add(uint8_t serial_id, proto_t *proto)
     UNUSED_PARAM(serial_id);
 
     control_t *control = data_parse_control(proto->list);
-    naveg_add_control(control, 1);
+
+    // a page of parameters the builder asked for comes with the hw_ids of the real actuators
+    if (!BM_add_control(control))
+        naveg_add_control(control, 1);
 
     protocol_send_response(CMD_RESPONSE, 0, proto);
 }
@@ -540,6 +607,9 @@ void cb_boot(uint8_t serial_id, proto_t *proto)
     g_self_test_mode = false;
     g_self_test_cancel_button = false;
 
+    // the host has come back up and knows nothing of a builder it was showing
+    BM_drop(1);
+
     //set the quick bypass link
     system_update_menu_value(MENU_ID_QUICK_BYPASS, atoi(proto->list[2]));
 
@@ -556,6 +626,8 @@ void cb_boot(uint8_t serial_id, proto_t *proto)
 
     g_device_booted = true;
 
+    naveg_ui_booted();
+
     protocol_send_response(CMD_RESPONSE, 0, proto);
 }
 
@@ -564,9 +636,10 @@ void cb_menu_item_changed(uint8_t serial_id, proto_t *proto)
     UNUSED_PARAM(serial_id);
 
     naveg_menu_item_changed_cb(atoi(proto->list[1]), atoi(proto->list[2]));
-    
+
+    // optional more "id value" pairs: only as many as the message has
     uint8_t i;
-    for (i = 3; i < ((MENU_ID_TOP+1) * 2); i+=2)
+    for (i = 3; i + 1 < proto->list_count && i < ((MENU_ID_TOP+1) * 2); i+=2)
     {
         if (atoi(proto->list[i]) != 0)
         {
@@ -597,6 +670,55 @@ void cb_pedalboard_clear(uint8_t serial_id, proto_t *proto)
 
     //reset the page to page 1
     naveg_reset_page();
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+}
+
+/*
+ * The two edges of a pedalboard load, whoever asked for it. Everything between them is a
+ * board in pieces, so the builder, which is a view onto the board, is left rather than
+ * redrawn around a graph that no longer holds.
+ */
+void cb_pedalboard_load_begin(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+
+    // the host stops watching the board on its own when a load starts, so this leaves
+    // without saying anything: nothing may be sent from inside a callback
+    BM_drop(1);
+}
+
+void cb_pedalboard_load_end(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+
+    // a NEW PEDALBOARD from the menu goes on into the builder, now that it is loaded
+    BM_pedalboard_loaded();
+}
+
+/*
+ * The board changed under the builder -- edited from the web UI, most of the time. Only a
+ * flag here: fetching the graph is a command of its own, and a callback cannot send one.
+ */
+void cb_plugin_map_updated(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+
+    BM_plugin_map_stale();
+}
+
+// a value of the builder's parameter page changed on the host, by a preset load most of the time
+void cb_builder_control_set(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    BM_set_control(atoi(proto->list[1]), atof(proto->list[2]));
 
     protocol_send_response(CMD_RESPONSE, 0, proto);
 }
