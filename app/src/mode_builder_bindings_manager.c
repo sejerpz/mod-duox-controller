@@ -471,9 +471,10 @@ void BM_bindings_manager_turn(uint8_t encoder, int8_t step)
 
     if (encoder == 2)
     {
-        int16_t next = (int16_t) g_page + step;
+        // the clicks page round, from the last back to the first and the other way
+        int16_t next = ((int16_t) g_page + step) % BB_MAX_PAGES;
 
-        if (next < 0 || next >= BB_MAX_PAGES) return;
+        if (next < 0) next += BB_MAX_PAGES;
 
         g_page = (uint8_t) next;
         build_page_title();
