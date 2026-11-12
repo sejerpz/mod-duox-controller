@@ -57,6 +57,13 @@
 #define SWAP(a, b)                      do{uint8_t t; t = a; a = b; b = t;} while(0)
 
 // SSP macros
+// a byte into the transmit FIFO, as soon as it has room
+#define PUT_BYTE(disp, data)            while (SSP_GetStatus(disp->ssp_module, SSP_STAT_TXFIFO_NOTFULL) == RESET); \
+                                        SSP_SendData(disp->ssp_module, data);
+// until the FIFO is empty and the last byte has left: the chip reads CD with the last bit of each byte,
+// so CD and /CS change only after this
+#define WAIT_IDLE(disp)                 while (SSP_GetStatus(disp->ssp_module, SSP_STAT_TXFIFO_EMPTY) == RESET || \
+                                               SSP_GetStatus(disp->ssp_module, SSP_STAT_BUSY) == SET);
 #define SEND_DATA(disp, data)           taskENTER_CRITICAL(); SSP_SendData(disp->ssp_module, data); taskEXIT_CRITICAL();\
                                         while (SSP_GetStatus(disp->ssp_module, SSP_STAT_TXFIFO_EMPTY) == RESET || \
                                                SSP_GetStatus(disp->ssp_module, SSP_STAT_BUSY) == SET);
@@ -338,20 +345,27 @@ void uc1701_update(uc1701_t *disp)
 
         disp->status |= UPDATING;
 
+        // each page streamed under one /CS: its address with CD low, then its columns with CD high, the
+        // bytes going into the FIFO while it has room, instead of one at a time each waited until sent
         for(i = 0; i < (DISPLAY_HEIGHT/8); i++)
         {
+            CLR_PIN(disp->cs_port, disp->cs_pin);
+
             // set page address
-            write_cmd(disp, UC1701_SET_PA + i);
+            CLR_PIN(disp->cd_port, disp->cd_pin);
+            PUT_BYTE(disp, UC1701_SET_PA + i);
 
             // set column address to first display address, considering
             // direction and difference of columns between display/chip
-            write_cmd(disp, UC1701_SET_CA_MSB);
+            PUT_BYTE(disp, UC1701_SET_CA_MSB);
 #ifdef UC1701_REVERSE_COLUMNS
-            write_cmd(disp, UC1701_SET_CA_LSB + (CHIP_COLUMNS - DISPLAY_WIDTH));
+            PUT_BYTE(disp, UC1701_SET_CA_LSB + (CHIP_COLUMNS - DISPLAY_WIDTH));
 #else
-            write_cmd(disp, UC1701_SET_CA_LSB);
+            PUT_BYTE(disp, UC1701_SET_CA_LSB);
 #endif
+            WAIT_IDLE(disp);
 
+            SET_PIN(disp->cd_port, disp->cd_pin);
             for(j = 0; j < DISPLAY_WIDTH; j++)
             {
                 if (disp->status & FORCE_REFRESH)
@@ -361,8 +375,11 @@ void uc1701_update(uc1701_t *disp)
                     break;
                 }
 
-                write_data(disp, disp->buffer[i][j]);
+                PUT_BYTE(disp, disp->buffer[i][j]);
             }
+            WAIT_IDLE(disp);
+
+            SET_PIN(disp->cs_port, disp->cs_pin);
         }
 
         disp->status &= ~(NEED_UPDATE | UPDATING);
