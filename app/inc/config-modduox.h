@@ -213,6 +213,13 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
 // time in milliseconds to enter in tool mode (hold rotary encoder button)
 #define TOOL_MODE_TIME      500
 
+// menu items that refresh themselves (need_update), in ms
+#define MENU_UPDATE_INTERVAL        1000
+
+// a display is refreshed at most once in this many ms, and two refreshes are this divided by the displays
+// apart: what is drawn in between goes out with the next one. A display idle for longer is refreshed at once
+#define DISPLAY_FRAME_MS            40
+
 // which display will show which tool
 #define DISPLAY_TOOL_SYSTEM         0
 #define DISPLAY_TOOL_TUNER          1

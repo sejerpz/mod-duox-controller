@@ -259,14 +259,30 @@ static void displays_task(void *pvParameters)
 {
     UNUSED_PARAM(pvParameters);
 
-    uint8_t i = 0;
-    uint32_t count = 0;
+    portTickType last_refresh[GLCD_COUNT], last_any, last_menu_update;
+    uint8_t i;
+
+    last_any = last_menu_update = xTaskGetTickCount();
+    for (i = 0; i < GLCD_COUNT; i++)
+        last_refresh[i] = last_any - DISPLAY_FRAME_MS / portTICK_RATE_MS;
+    last_any -= DISPLAY_FRAME_MS / portTICK_RATE_MS;
 
     while (1)
     {
-        // update GLCD
-        glcd_update(hardware_glcds(i));
-        if (++i == GLCD_COUNT) i = 0;
+        // update GLCD, at its deadline (DISPLAY_FRAME_MS)
+        for (i = 0; i < GLCD_COUNT; i++)
+        {
+            glcd_t *display = hardware_glcds(i);
+            const portTickType now = xTaskGetTickCount();
+
+            if ((display->status & NEED_UPDATE) &&
+                now - last_refresh[i] >= DISPLAY_FRAME_MS / portTICK_RATE_MS &&
+                now - last_any >= DISPLAY_FRAME_MS / GLCD_COUNT / portTICK_RATE_MS)
+            {
+                glcd_update(display);
+                last_refresh[i] = last_any = now;
+            }
+        }
 
         //the builder refetches a graph the host changed, from here where it may send a command
         BM_tick();
@@ -276,20 +292,22 @@ static void displays_task(void *pvParameters)
             naveg_update_pb_list();
         }
 
-        // I know, this is embarrassing
+        //menu items that refresh themselves (need_update)
         if (naveg_need_update())
         {
-            if (++count == 500000)
+            if ((xTaskGetTickCount() - last_menu_update) >= (MENU_UPDATE_INTERVAL / portTICK_RATE_MS))
             {
                 naveg_update();
-                count = 0;
+                last_menu_update = xTaskGetTickCount();
             }
         }
         else
         {
-            count = 0;
+            last_menu_update = xTaskGetTickCount();
         }
 
+        // the deadlines are polled, not slept on: a delay a thousand times a second moves this task between the
+        // kernel lists as often, and the serial interrupts give their semaphores above the syscall priority
         taskYIELD();
     }
 }
