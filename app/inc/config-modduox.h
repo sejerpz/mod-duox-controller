@@ -104,7 +104,7 @@
 
 // GCLD common definitions
 // check the drivers header to see how to set the structure
-#define GLCD_COMMON_CONFIG  .ssp_module = LPC_SSP0, .ssp_clock = 2000000, \
+#define GLCD_COMMON_CONFIG  .ssp_module = LPC_SSP0, .ssp_clock = 4000000, \
                             .ssp_clk_port = 0, .ssp_clk_pin = 15, .ssp_clk_func = 2, \
                             .ssp_mosi_port = 0, .ssp_mosi_pin = 18, .ssp_mosi_func = 2, \
                             .cd_port = 4, .cd_pin = 20
