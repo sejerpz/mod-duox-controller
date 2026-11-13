@@ -19,6 +19,7 @@
 #include "plugin_map.h"
 #include "glcd_clip.h"
 #include "mode_builder.h"
+#include "system.h"
 
 /*
 ************************************************************************************************************************
@@ -1004,6 +1005,19 @@ void screen_top_info(const void *data, uint8_t update)
     title.y = 0;
     title.x = 1;
     widget_textbox(display, &title);
+
+    // top right corner: the WiFi state, when there is an adapter
+    switch (system_wifi_icon())
+    {
+        case WIFI_ICON_AP:
+            icon_access_point(display, DISPLAY_WIDTH - 11, 0);
+        break;
+
+        case WIFI_ICON_CONNECTED:
+        case WIFI_ICON_DISCONNECTED:
+            icon_wifi(display, DISPLAY_WIDTH - 11, 0, system_wifi_icon() == WIFI_ICON_CONNECTED);
+        break;
+    }
 
     // horizontal footer line
     glcd_hline(display, 0, 7, DISPLAY_WIDTH, GLCD_BLACK);

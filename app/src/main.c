@@ -22,6 +22,7 @@
 #include "data.h"
 #include "naveg.h"
 #include "screen.h"
+#include "system.h"
 #include "cli.h"
 #include "ui_comm.h"
 #include "sys_comm.h"
@@ -305,6 +306,9 @@ static void displays_task(void *pvParameters)
         {
             last_menu_update = xTaskGetTickCount();
         }
+
+        //WiFi state outside the WIFI page (title icon)
+        system_wifi_check();
 
         // the deadlines are polled, not slept on: a delay a thousand times a second moves this task between the
         // kernel lists as often, and the serial interrupts give their semaphores above the syscall priority

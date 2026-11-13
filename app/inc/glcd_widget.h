@@ -148,6 +148,9 @@ void widget_tuner(glcd_t *display, tuner_t *tuner);
 void widget_popup(glcd_t *display, popup_t *popup);
 void widget_knob(glcd_t *display, knob_t *knob);
 void widget_bar_indicator(glcd_t *display, bar_t *bar); 
+// 11x7 badges of the WiFi state
+void icon_access_point(glcd_t *display, uint8_t x, uint8_t y);
+void icon_wifi(glcd_t *display, uint8_t x, uint8_t y, uint8_t connected);
 
 
 /*

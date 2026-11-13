@@ -16,6 +16,7 @@
 #include "glcd.h"
 #include "utils.h"
 #include "screen.h"
+#include "system.h"
 #include "cli.h"
 #include "calibration.h"
 #include "mod-protocol.h"
@@ -756,6 +757,9 @@ void cb_pedalboard_load_end(uint8_t serial_id, proto_t *proto)
 
     // a NEW PEDALBOARD from the menu goes on into the builder, now that it is loaded
     BM_pedalboard_loaded();
+
+    // WiFi icon of the title: read by the displays task, the cli is not used from here
+    system_wifi_request_check();
 }
 
 /*

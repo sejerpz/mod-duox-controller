@@ -39,6 +39,9 @@
 ************************************************************************************************************************
 */
 
+// WiFi state shown in the title of the control screen
+enum {WIFI_ICON_NONE, WIFI_ICON_AP, WIFI_ICON_CONNECTED, WIFI_ICON_DISCONNECTED};
+
 
 /*
 ************************************************************************************************************************
@@ -75,6 +78,9 @@ void system_pedalboard_cb(void *arg, int event);
 void system_bluetooth_cb(void *arg, int event);
 void system_wifi_cb(void *arg, int event);
 void system_wifi_ap_cb(void *arg, int event);
+uint8_t system_wifi_icon(void);
+void system_wifi_request_check(void);
+void system_wifi_check(void);
 
 //control for input 1 + 2
 void system_inp_0_volume_cb(void *arg, int event);
