@@ -270,6 +270,7 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
 #define PROFILES_ID         (19 * 10)
 #define MIDI_ID             (20 * 10)
 #define IO_PROCESSING_ID    (21 * 10)
+#define WIFI_ID             (22 * 10)
 
 //pedalboard sub menu
 #define PEDALBOARD_SAVE_ID   PEDALBOARD_ID+2
@@ -329,6 +330,11 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
 #define WEB_UI_ID           DEVICE_SETTINGS_ID + 12
 
 #define BLUETOOTH_DISCO_ID  BLUETOOTH_ID+2
+
+// WIFI_AP_ID+1 is the pop-up to switch the access point off
+#define WIFI_AP_ID          WIFI_ID+2
+#define WIFI_IP_ID          WIFI_ID+4
+#define WIFI_AP_STATUS_ID   WIFI_ID+5
 
 #define DIALOG_ID           230
 
@@ -390,6 +396,11 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
     {"STATUS:",                         MENU_NONE,      BLUETOOTH_ID+3,       BLUETOOTH_ID,       NULL                       , 0},  \
     {"NAME:",                           MENU_NONE,      BLUETOOTH_ID+4,       BLUETOOTH_ID,       NULL                       , 0},  \
     {"ADDRESS:",                        MENU_NONE,      BLUETOOTH_ID+5,       BLUETOOTH_ID,       NULL                       , 0},  \
+    {"WIFI",                            MENU_LIST,      WIFI_ID,              SYSTEM_ID,          system_wifi_cb             , 1},  \
+    {"< BACK TO SYSTEM",                MENU_RETURN,    WIFI_ID+1,            WIFI_ID,            NULL                       , 0},  \
+    {"ACCESS POINT",                    MENU_CONFIRM,   WIFI_AP_ID,           WIFI_ID,            system_wifi_ap_cb          , 0},  \
+    {"IP ADDRESS",                      MENU_NONE,      WIFI_IP_ID,           WIFI_ID,            NULL                       , 0},  \
+    {"AP STATUS",                       MENU_NONE,      WIFI_AP_STATUS_ID,    WIFI_ID,            NULL                       , 0},  \
     {"DEVICE SETTINGS",                 MENU_LIST,      DEVICE_SETTINGS_ID,   SYSTEM_ID,          NULL                       , 0},  \
     {"< BACK TO SYSTEM",                MENU_RETURN,    DEVICE_SETTINGS_ID+1, DEVICE_SETTINGS_ID, NULL                       , 0},  \
     {"USB-B MODE",                      MENU_SET,       USB_B_MODE_ID,        DEVICE_SETTINGS_ID, system_usb_b_cb            , 0},  \
@@ -436,6 +447,8 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
     {PEDALBOARD_RESET_ID, "Reset pedalboard", "Undo every change made since\nthe last save of the active\npedalboard?"},      \
     {WEB_UI_ID, "Web interface", "Switch the web interface back\nto the default one? It will\nrestart, the pedalboard keeps\nplaying."},      \
     {PEDALBOARD_NEW_ID, "New pedalboard", "Replace the current pedalboard\nwith a new empty one?\nUnsaved changes are lost."},      \
+    {WIFI_AP_ID, "Access point on", "Switch the WiFi access point\non? The WiFi connection\ndrops for a few seconds."},  \
+    {WIFI_AP_ID+1, "Access point off", "Switch the WiFi access point\noff? The WiFi connection\ndrops for a few seconds."},  \
     {BLUETOOTH_DISCO_ID, "Enable Bluetooth", "Bluetooth discovery mode is   now enabled for 2 minutes"},  \
     {UPGRADE_ID, "Start System Upgrade", "To start the system upgrade\nprocess, press and hold down\nthe leftmost button and press\nyes. "}, \
     {PROFILES_ID+1, "Load user profile A", PROFILE_POPUP_LOAD_TXT}, \
@@ -571,6 +584,8 @@ enum {ENCODER0, ENCODER1, FOOTSWITCH0, FOOTSWITCH1, FOOTSWITCH2, FOOTSWITCH3, FO
 #define CLI_SERIAL                  2
 // defines how much time wait for console response (in milliseconds)
 #define CLI_RESPONSE_TIMEOUT        500
+// wifi-ap takes about 100 ms on an idle device, 200 ms and more with a heavy pedalboard
+#define CLI_WIFI_RESPONSE_TIMEOUT   1000
 
 ///EEPROM adress page defines
 #define HIDE_ACTUATOR_ADRESS               0

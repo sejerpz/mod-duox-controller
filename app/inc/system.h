@@ -73,6 +73,8 @@ void system_update_menu_value(uint8_t item_ID, uint16_t value);
 void system_pedalboard_cb(void *arg, int event);
 //used for all bluetooth actions
 void system_bluetooth_cb(void *arg, int event);
+void system_wifi_cb(void *arg, int event);
+void system_wifi_ap_cb(void *arg, int event);
 
 //control for input 1 + 2
 void system_inp_0_volume_cb(void *arg, int event);

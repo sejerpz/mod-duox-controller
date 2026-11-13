@@ -1786,8 +1786,8 @@ static void menu_enter(uint8_t display_id)
                     item->data.popup_header = save_profile_header;
 
                 }
-                //cv toggle popups, they have a different popup depending on their current value
-                else if ((item->desc->id == EXP_CV_INP) || (item->desc->id == HP_CV_OUTP))
+                //cv toggle and access point popups, they have a different popup depending on their current value
+                else if ((item->desc->id == EXP_CV_INP) || (item->desc->id == HP_CV_OUTP) || (item->desc->id == WIFI_AP_ID))
                 {
                     if (!item->data.value)
                     {
