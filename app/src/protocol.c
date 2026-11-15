@@ -675,11 +675,14 @@ void cb_boot(uint8_t serial_id, proto_t *proto)
     //set the tuner mute state 
     system_update_menu_value(MENU_ID_TUNER_MUTE, atoi(proto->list[3]));
 
-    //set the current user profile 
-    system_update_menu_value(PROFILES_ID, atoi(proto->list[4]));
+    // the profile and the master volume link are optional: only as many as the message has
+    //set the current user profile
+    if (proto->list_count > 4)
+        system_update_menu_value(PROFILES_ID, atoi(proto->list[4]));
 
     //set the master volume link
-    system_update_menu_value(MENU_ID_MASTER_VOL_PORT, atoi(proto->list[5]));
+    if (proto->list_count > 5)
+        system_update_menu_value(MENU_ID_MASTER_VOL_PORT, atoi(proto->list[5]));
 
     naveg_turn_on_pagination_leds();
 
