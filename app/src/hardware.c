@@ -26,13 +26,13 @@
 //0 is highest priority
 
 //Timer 0 LEDS + Display backlight
-#define TIMER0_PRIORITY     4
+#define TIMER0_PRIORITY     6
 //Timer 1 Actuators polling
 #define TIMER1_PRIORITY     6
 //Timer 2 overlay counter
 #define TIMER2_PRIORITY     2
 //Timer 3 pols overlay and print if needed
-#define TIMER3_PRIORITY     5
+#define TIMER3_PRIORITY     7
 
 /*
 ************************************************************************************************************************
