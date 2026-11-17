@@ -400,7 +400,10 @@ void protocol_init(void)
     protocol_add_command(CMD_SYS_WIDGET_BITMAP, cb_widget_bitmap);
     protocol_add_command(CMD_SYS_WIDGET_CLEAR, cb_widget_clear);
     protocol_add_command(CMD_PEDALBOARD_CHANGE, cb_pedalboard_change);
+    protocol_add_command(CMD_SCREENSHOT, cb_screenshot);
 }
+
+volatile uint8_t g_screenshot = 0;
 
 /*
 ************************************************************************************************************************
@@ -806,6 +809,18 @@ void cb_pedalboard_change(uint8_t serial_id, proto_t *proto)
     protocol_send_response(CMD_RESPONSE, 0, proto);
 
     naveg_set_pb_list_update();
+}
+
+// a callback cannot send commands of its own: the display task sends the 8 pages once this is answered
+void cb_screenshot(uint8_t serial_id, proto_t *proto)
+{
+    UNUSED_PARAM(serial_id);
+
+    protocol_send_response(CMD_RESPONSE, 0, proto);
+
+    // one based on the wire, 1 the left display, 2 the right one: 0 is nothing to do
+    uint8_t display = atoi(proto->list[1]);
+    if (display <= GLCD_COUNT) g_screenshot = display;
 }
 
 void cb_pages_available(uint8_t serial_id, proto_t *proto)

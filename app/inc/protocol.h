@@ -121,6 +121,10 @@ void cb_clear_eeprom(uint8_t serial_id, proto_t *proto);
 void cb_set_disp_contrast(uint8_t serial_id, proto_t *proto);
 void cb_exp_overcurrent(uint8_t serial_id, proto_t *proto);
 void cb_pedalboard_change(uint8_t serial_id, proto_t *proto);
+void cb_screenshot(uint8_t serial_id, proto_t *proto);
+
+// the display asked by the last screenshot command, one based, 0 when none is pending
+extern volatile uint8_t g_screenshot;
 
 void cb_change_assigned_led_blink(uint8_t serial_id, proto_t *proto);
 void cb_change_assigned_led_brightness(uint8_t serial_id, proto_t *proto);
