@@ -27,7 +27,7 @@
 // SERIAL3 webgui callbacks
 #define SERIAL3
 #define SERIAL3_BAUD_RATE       1500000
-#define SERIAL3_PRIORITY        1
+#define SERIAL3_PRIORITY        5
 #define SERIAL3_RX_PORT         0
 #define SERIAL3_RX_PIN          3
 #define SERIAL3_RX_FUNC         2
@@ -41,7 +41,7 @@
 // SERIAL2 CLI
 #define SERIAL2
 #define SERIAL2_BAUD_RATE       115200
-#define SERIAL2_PRIORITY        1
+#define SERIAL2_PRIORITY        6
 #define SERIAL2_RX_PORT         2
 #define SERIAL2_RX_PIN          9
 #define SERIAL2_RX_FUNC         2
@@ -55,7 +55,7 @@
 // SERIAL0 (system callbacks)
 #define SERIAL0
 #define SERIAL0_BAUD_RATE       1500000
-#define SERIAL0_PRIORITY        2
+#define SERIAL0_PRIORITY        5
 #define SERIAL0_RX_PORT         0
 #define SERIAL0_RX_PIN          1
 #define SERIAL0_RX_FUNC         4
